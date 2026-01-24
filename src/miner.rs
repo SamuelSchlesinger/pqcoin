@@ -1,6 +1,14 @@
 //! Block mining.
 //!
 //! Simple CPU miner for creating new blocks.
+//!
+//! # Transaction Selection
+//!
+//! The miner selects transactions from the mempool using fee-rate prioritization:
+//! transactions are sorted by `fee / serialized_size` in descending order. This
+//! maximizes miner revenue by including the highest-paying transactions first.
+//!
+//! See [`Mempool::get_block_txs_with_fees()`] for the sorting implementation.
 
 use crate::blockchain::{Address, Block, BlockHeader, Blockchain, Transaction};
 use crate::constants::MAX_BLOCK_TXS;
@@ -43,8 +51,8 @@ pub fn mine_block(
     // Get block reward
     let reward = blockchain.block_reward(height);
 
-    // Get transactions from mempool
-    let mut txs = mempool.get_block_txs(MAX_BLOCK_TXS);
+    // Get transactions from mempool, sorted by fee rate (highest first)
+    let mut txs = mempool.get_block_txs_with_fees(MAX_BLOCK_TXS, blockchain);
 
     // Calculate fees
     let fees: u64 = txs.iter().map(|tx| calculate_fee(tx, blockchain)).sum();

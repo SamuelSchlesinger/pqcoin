@@ -5,6 +5,21 @@
 //! - Handshake protocol
 //! - Connection state tracking
 //! - Send/receive operations
+//!
+//! # Security
+//!
+//! ## Message Size Limits
+//!
+//! All incoming messages are validated against [`MAX_MESSAGE_SIZE`] (10 MB) before
+//! memory allocation. This prevents malicious peers from causing memory exhaustion.
+//!
+//! ## Memory Optimization
+//!
+//! The `receive_message()` method uses a single allocation for both header and payload
+//! data. This reduces peak memory usage by 50% compared to separate allocations:
+//!
+//! - **Old approach**: Allocate payload (10 MB) + copy to full_message (10 MB) = 20 MB peak
+//! - **New approach**: Single allocation for header + payload = 10 MB peak
 
 use crate::network::message::{Message, MessageError, Services, NETWORK_MAGIC, PROTOCOL_VERSION};
 use std::net::SocketAddr;
@@ -329,16 +344,14 @@ impl Peer {
             return Err(PeerError::MessageTooLarge(length));
         }
 
-        // Read payload
-        let mut payload = vec![0u8; length];
-        if length > 0 {
-            self.stream.read_exact(&mut payload).await?;
-        }
+        // Allocate once for both header and payload to avoid double allocation
+        let mut full_message = vec![0u8; HEADER_SIZE + length];
+        full_message[..HEADER_SIZE].copy_from_slice(&header);
 
-        // Combine header and payload for deserialization
-        let mut full_message = Vec::with_capacity(HEADER_SIZE + length);
-        full_message.extend_from_slice(&header);
-        full_message.extend_from_slice(&payload);
+        // Read payload directly into the combined buffer
+        if length > 0 {
+            self.stream.read_exact(&mut full_message[HEADER_SIZE..]).await?;
+        }
 
         let msg = Message::deserialize_with_header(&full_message)?;
 
