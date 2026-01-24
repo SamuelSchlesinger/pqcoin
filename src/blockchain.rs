@@ -2279,4 +2279,383 @@ mod tests {
         let result = Address::from_bytes(&bytes);
         assert!(matches!(result, Err(DeserializeError::InvalidData(_))));
     }
+
+    // ========================================================================
+    // Negative Path Tests
+    // ========================================================================
+
+    /// Helper to create a test blockchain with a mature genesis coinbase.
+    ///
+    /// Adds COINBASE_MATURITY empty blocks so the genesis coinbase can be spent.
+    fn test_blockchain() -> (Blockchain, PublicKey, crypto::SecretKey, Address) {
+        let (pk, sk) = test_keypair();
+        let address = Address::from_public_key(&pk);
+        let mut timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() - (COINBASE_MATURITY + 10) * 600; // Start in the past
+
+        let genesis = create_genesis_block(
+            timestamp,
+            0x40ffffff, // Easy difficulty
+            50_000_000,
+            address,
+        );
+        let mut chain = Blockchain::new(genesis, 2016, 600, 50_000_000, 210_000);
+
+        // Add COINBASE_MATURITY blocks to mature the genesis coinbase
+        for _ in 0..COINBASE_MATURITY {
+            timestamp += 600;
+            let prev_block = chain.tip();
+            let height = chain.height() + 1;
+            let reward = chain.block_reward(height);
+
+            let coinbase = Transaction::coinbase(height, reward, address);
+            let merkle_root = Block::compute_merkle_root(&[coinbase.clone()]);
+
+            let header = BlockHeader {
+                version: BlockHeader::CURRENT_VERSION,
+                prev_hash: prev_block.hash(),
+                merkle_root,
+                timestamp,
+                difficulty_bits: prev_block.header.difficulty_bits,
+                nonce: 0,
+            };
+
+            let block = Block::new(header, vec![coinbase]);
+            chain.add_block(block).unwrap();
+        }
+
+        (chain, pk, sk, address)
+    }
+
+    /// Helper to find a mature UTXO that can be spent
+    fn find_mature_utxo<'a>(
+        chain: &'a Blockchain,
+        address: &Address,
+    ) -> (OutPoint, &'a Utxo) {
+        let utxos = chain.utxos_for_address(address);
+        utxos
+            .into_iter()
+            .find(|(_, u)| {
+                // Mature if non-coinbase, or coinbase with enough confirmations
+                !u.is_coinbase || chain.height() >= u.height + COINBASE_MATURITY
+            })
+            .expect("No mature UTXO found")
+    }
+
+    /// Helper to create a valid spending transaction
+    fn create_spending_tx(
+        chain: &Blockchain,
+        from_pk: &PublicKey,
+        from_sk: &crypto::SecretKey,
+        to_address: Address,
+    ) -> Transaction {
+        let from_address = Address::from_public_key(from_pk);
+        let (outpoint, utxo) = find_mature_utxo(chain, &from_address);
+
+        // Create transaction structure
+        let inputs = vec![TxInput::new(
+            outpoint,
+            Witness::P2PKH {
+                public_key: from_pk.clone(),
+                signature: crypto::ml_dsa_87::sign(from_sk, b"placeholder"),
+            },
+        )];
+        let outputs = vec![TxOutput::p2pkh(utxo.output.amount, to_address)];
+        let mut tx = Transaction::new(inputs, outputs);
+
+        // Sign the transaction properly
+        let signing_data = tx.signing_data(0);
+        let message = crypto::hash(&signing_data);
+        let signature = crypto::ml_dsa_87::sign(from_sk, message.as_bytes());
+        tx.inputs[0].witness = Witness::P2PKH {
+            public_key: from_pk.clone(),
+            signature,
+        };
+
+        tx
+    }
+
+    /// Helper to create a block containing transactions
+    fn create_block_with_txs(
+        chain: &Blockchain,
+        txs: Vec<Transaction>,
+        recipient: Address,
+    ) -> Block {
+        let prev_block = chain.tip();
+        let height = chain.height() + 1;
+        let reward = chain.block_reward(height);
+
+        // Create coinbase
+        let mut all_txs = vec![Transaction::coinbase(height, reward, recipient)];
+        all_txs.extend(txs);
+
+        let merkle_root = Block::compute_merkle_root(&all_txs);
+        // Timestamp must be strictly greater than previous block
+        let timestamp = prev_block.header.timestamp + 600;
+
+        let header = BlockHeader {
+            version: BlockHeader::CURRENT_VERSION,
+            prev_hash: prev_block.hash(),
+            merkle_root,
+            timestamp,
+            difficulty_bits: prev_block.header.difficulty_bits,
+            nonce: 0,
+        };
+
+        Block::new(header, all_txs)
+    }
+
+    #[test]
+    fn test_invalid_signature_rejected() {
+        let (mut chain, pk, _sk, address) = test_blockchain();
+        let (other_pk, other_sk) = test_keypair();
+        let other_address = Address::from_public_key(&other_pk);
+
+        // Find a mature UTXO (genesis coinbase at height 0)
+        let utxos = chain.utxos_for_address(&address);
+        let (outpoint, utxo) = utxos
+            .iter()
+            .find(|(_, u)| {
+                // Find a mature coinbase (created at height 0, now at height 100+)
+                u.height == 0 && chain.height() >= u.height + COINBASE_MATURITY
+            })
+            .expect("No mature UTXO found");
+
+        let inputs = vec![TxInput::new(
+            *outpoint,
+            Witness::P2PKH {
+                public_key: pk.clone(),
+                signature: crypto::ml_dsa_87::sign(&other_sk, b"wrong key"),
+            },
+        )];
+        let outputs = vec![TxOutput::p2pkh(utxo.output.amount, other_address)];
+        let mut tx = Transaction::new(inputs, outputs);
+
+        // Sign with wrong secret key (signature won't verify with pk)
+        let signing_data = tx.signing_data(0);
+        let message = crypto::hash(&signing_data);
+        let wrong_signature = crypto::ml_dsa_87::sign(&other_sk, message.as_bytes());
+        tx.inputs[0].witness = Witness::P2PKH {
+            public_key: pk.clone(),
+            signature: wrong_signature,
+        };
+
+        let block = create_block_with_txs(&chain, vec![tx], other_address);
+        let result = chain.add_block(block);
+        assert!(matches!(result, Err(BlockchainError::InvalidWitness)));
+    }
+
+    #[test]
+    fn test_wrong_public_key_rejected() {
+        let (mut chain, _pk, sk, address) = test_blockchain();
+        let (other_pk, _other_sk) = test_keypair();
+        let other_address = Address::from_public_key(&other_pk);
+
+        // Create a transaction with wrong public key (doesn't match address)
+        let (outpoint, utxo) = find_mature_utxo(&chain, &address);
+
+        let inputs = vec![TxInput::new(
+            outpoint,
+            Witness::P2PKH {
+                public_key: other_pk.clone(), // Wrong public key
+                signature: crypto::ml_dsa_87::sign(&sk, b"placeholder"),
+            },
+        )];
+        let outputs = vec![TxOutput::p2pkh(utxo.output.amount, other_address)];
+        let mut tx = Transaction::new(inputs, outputs);
+
+        // Sign correctly, but public key doesn't match the address
+        let signing_data = tx.signing_data(0);
+        let message = crypto::hash(&signing_data);
+        let signature = crypto::ml_dsa_87::sign(&sk, message.as_bytes());
+        tx.inputs[0].witness = Witness::P2PKH {
+            public_key: other_pk.clone(), // Still wrong
+            signature,
+        };
+
+        let block = create_block_with_txs(&chain, vec![tx], other_address);
+        let result = chain.add_block(block);
+        assert!(matches!(result, Err(BlockchainError::InvalidWitness)));
+    }
+
+    #[test]
+    fn test_insufficient_multisig_signatures_rejected() {
+        let (pk1, sk1) = test_keypair();
+        let (pk2, _sk2) = test_keypair();
+        let (pk3, _sk3) = test_keypair();
+        let (miner_pk, _) = test_keypair();
+        let miner_address = Address::from_public_key(&miner_pk);
+
+        // Create a 2-of-3 multisig output in genesis
+        let multisig_condition = LockingCondition::multisig(2, vec![pk1.clone(), pk2.clone(), pk3.clone()]);
+        let coinbase = Transaction {
+            version: Transaction::CURRENT_VERSION,
+            inputs: vec![TxInput::coinbase(&0u64.to_le_bytes())],
+            outputs: vec![TxOutput {
+                amount: 50_000_000,
+                condition: multisig_condition,
+            }],
+        };
+        let merkle_root = Block::compute_merkle_root(&[coinbase.clone()]);
+        let mut timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() - (COINBASE_MATURITY + 10) * 600;
+
+        let genesis_header = BlockHeader {
+            version: BlockHeader::CURRENT_VERSION,
+            prev_hash: Hash::from_bytes([0u8; 64]),
+            merkle_root,
+            timestamp,
+            difficulty_bits: 0x40ffffff,
+            nonce: 0,
+        };
+        let genesis = Block::new(genesis_header, vec![coinbase.clone()]);
+
+        let mut chain = Blockchain::new(genesis, 2016, 600, 50_000_000, 210_000);
+
+        // Add COINBASE_MATURITY blocks to mature the genesis coinbase
+        for i in 0..COINBASE_MATURITY {
+            timestamp += 600;
+            let prev_block = chain.tip();
+            let height = chain.height() + 1;
+            let reward = chain.block_reward(height);
+
+            let miner_coinbase = Transaction::coinbase(height, reward, miner_address);
+            let block_merkle_root = Block::compute_merkle_root(&[miner_coinbase.clone()]);
+
+            let header = BlockHeader {
+                version: BlockHeader::CURRENT_VERSION,
+                prev_hash: prev_block.hash(),
+                merkle_root: block_merkle_root,
+                timestamp,
+                difficulty_bits: prev_block.header.difficulty_bits,
+                nonce: 0,
+            };
+
+            let block = Block::new(header, vec![miner_coinbase]);
+            chain.add_block(block).unwrap();
+        }
+
+        // Try to spend with only 1 signature (need 2)
+        let outpoint = OutPoint::new(coinbase.txid(), 0);
+        let (recipient_pk, _) = test_keypair();
+        let recipient_address = Address::from_public_key(&recipient_pk);
+
+        let inputs = vec![TxInput::new(
+            outpoint,
+            Witness::Multisig {
+                public_keys: vec![pk1.clone(), pk2.clone(), pk3.clone()],
+                signatures: vec![Some(crypto::ml_dsa_87::sign(&sk1, b"placeholder")), None, None],
+            },
+        )];
+        let outputs = vec![TxOutput::p2pkh(50_000_000, recipient_address)];
+        let mut tx = Transaction::new(inputs, outputs);
+
+        // Sign with only sk1 (need 2 signatures for 2-of-3)
+        let signing_data = tx.signing_data(0);
+        let message = crypto::hash(&signing_data);
+        let sig1 = crypto::ml_dsa_87::sign(&sk1, message.as_bytes());
+        tx.inputs[0].witness = Witness::Multisig {
+            public_keys: vec![pk1.clone(), pk2.clone(), pk3.clone()],
+            signatures: vec![Some(sig1), None, None], // Only 1 signature
+        };
+
+        let block = create_block_with_txs(&chain, vec![tx], recipient_address);
+        let result = chain.add_block(block);
+        assert!(matches!(result, Err(BlockchainError::InvalidWitness)));
+    }
+
+    #[test]
+    fn test_double_spend_within_block_detected() {
+        let (mut chain, pk, sk, address) = test_blockchain();
+        let (recipient_pk, _) = test_keypair();
+        let recipient_address = Address::from_public_key(&recipient_pk);
+
+        // Create two transactions that spend the same UTXO
+        let tx1 = create_spending_tx(&chain, &pk, &sk, recipient_address);
+        let tx2 = create_spending_tx(&chain, &pk, &sk, recipient_address);
+
+        // Both transactions try to spend the same output
+        assert_eq!(tx1.inputs[0].outpoint, tx2.inputs[0].outpoint);
+
+        let block = create_block_with_txs(&chain, vec![tx1, tx2], recipient_address);
+        let result = chain.add_block(block);
+        assert!(matches!(result, Err(BlockchainError::DoubleSpend(_))));
+    }
+
+    #[test]
+    fn test_spending_immature_coinbase_rejected() {
+        let (mut chain, pk, sk, address) = test_blockchain();
+        let (recipient_pk, _) = test_keypair();
+        let recipient_address = Address::from_public_key(&recipient_pk);
+
+        // Add a new block with a coinbase
+        let block1 = create_block_with_txs(&chain, vec![], address);
+        chain.add_block(block1.clone()).unwrap();
+
+        // Try to spend the new coinbase immediately (before COINBASE_MATURITY blocks)
+        let new_coinbase_txid = block1.transactions[0].txid();
+        let outpoint = OutPoint::new(new_coinbase_txid, 0);
+        let new_coinbase_amount = block1.transactions[0].outputs[0].amount;
+
+        let inputs = vec![TxInput::new(
+            outpoint,
+            Witness::P2PKH {
+                public_key: pk.clone(),
+                signature: crypto::ml_dsa_87::sign(&sk, b"placeholder"),
+            },
+        )];
+        let outputs = vec![TxOutput::p2pkh(new_coinbase_amount, recipient_address)];
+        let mut tx = Transaction::new(inputs, outputs);
+
+        // Sign properly
+        let signing_data = tx.signing_data(0);
+        let message = crypto::hash(&signing_data);
+        let signature = crypto::ml_dsa_87::sign(&sk, message.as_bytes());
+        tx.inputs[0].witness = Witness::P2PKH {
+            public_key: pk.clone(),
+            signature,
+        };
+
+        // This should fail because the coinbase is immature
+        let block2 = create_block_with_txs(&chain, vec![tx], recipient_address);
+        let result = chain.add_block(block2);
+        assert!(matches!(result, Err(BlockchainError::MissingInput(_))));
+    }
+
+    #[test]
+    fn test_insufficient_inputs_rejected() {
+        let (mut chain, pk, sk, address) = test_blockchain();
+        let (recipient_pk, _) = test_keypair();
+        let recipient_address = Address::from_public_key(&recipient_pk);
+
+        // Try to create more output value than input value
+        let (outpoint, utxo) = find_mature_utxo(&chain, &address);
+
+        let inputs = vec![TxInput::new(
+            outpoint,
+            Witness::P2PKH {
+                public_key: pk.clone(),
+                signature: crypto::ml_dsa_87::sign(&sk, b"placeholder"),
+            },
+        )];
+        // Output more than we have
+        let outputs = vec![TxOutput::p2pkh(utxo.output.amount + 1, recipient_address)];
+        let mut tx = Transaction::new(inputs, outputs);
+
+        let signing_data = tx.signing_data(0);
+        let message = crypto::hash(&signing_data);
+        let signature = crypto::ml_dsa_87::sign(&sk, message.as_bytes());
+        tx.inputs[0].witness = Witness::P2PKH {
+            public_key: pk.clone(),
+            signature,
+        };
+
+        let block = create_block_with_txs(&chain, vec![tx], recipient_address);
+        let result = chain.add_block(block);
+        assert!(matches!(result, Err(BlockchainError::InsufficientInputs)));
+    }
 }
