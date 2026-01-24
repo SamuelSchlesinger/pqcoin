@@ -1461,6 +1461,20 @@ impl Blockchain {
     }
 
     /// Verify a transaction's signatures.
+    ///
+    /// # Signature Verification Design
+    ///
+    /// Before passing data to ML-DSA-87, we hash the signing data with SHA3-512.
+    /// This is intentional and correct for two reasons:
+    ///
+    /// 1. **ML-DSA-87 signs raw messages**: Unlike some signature schemes, ML-DSA-87
+    ///    (FIPS 204) does not perform internal hashing - it signs the message directly.
+    ///    Pre-hashing is appropriate for potentially large transaction data.
+    ///
+    /// 2. **Fixed-size input**: Hashing produces a fixed 64-byte input regardless of
+    ///    transaction size, which is more efficient for the signature algorithm.
+    ///
+    /// This matches Bitcoin's approach of signing the SHA256d hash of transaction data.
     fn verify_transaction(&self, tx: &Transaction, height: u64) -> Result<u64, BlockchainError> {
         if tx.is_coinbase() {
             // Coinbase transactions are verified differently
