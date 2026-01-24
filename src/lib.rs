@@ -18,8 +18,28 @@
 //!
 //! ## Modules
 //!
-//! - [`crypto`]: Cryptographic primitives (SHA3-512, ML-DSA-87)
-//! - [`blockchain`]: Core data structures (transactions, blocks, chain state)
+//! | Module | Description |
+//! |--------|-------------|
+//! | [`crypto`] | Cryptographic primitives (SHA3-512, ML-DSA-87) |
+//! | [`blockchain`] | Core data structures (transactions, blocks, chain state) |
+//! | [`mempool`] | Unconfirmed transaction pool with validation |
+//! | [`miner`] | Proof-of-work block mining |
+//! | [`network`] | P2P networking and block synchronization |
+//!
+//! ## Architecture
+//!
+//! ```text
+//! ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+//! │   Network   │────▶│  Blockchain │◀────│    Miner    │
+//! │   Service   │     │    State    │     │             │
+//! └─────────────┘     └─────────────┘     └─────────────┘
+//!        │                   ▲                   │
+//!        │                   │                   │
+//!        ▼                   │                   │
+//! ┌─────────────┐            │                   │
+//! │   Mempool   │────────────┴───────────────────┘
+//! └─────────────┘
+//! ```
 //!
 //! ## Quick Start
 //!
@@ -52,17 +72,37 @@
 //! println!("Balance: {} quanta", blockchain.balance(&address));
 //! ```
 
+pub mod api;
 pub mod blockchain;
+pub mod config;
+pub mod constants;
 pub mod crypto;
+pub mod mempool;
+pub mod miner;
+pub mod network;
+pub mod wallet;
 
 // Re-export commonly used types for convenience
 pub use blockchain::{
     Address, Block, BlockHeader, Blockchain, BlockchainError, DeserializeError, Deserialize,
     LockingCondition, OutPoint, Serialize, Transaction, TxInput, TxOutput, Utxo, Witness,
     create_genesis_block,
-    // Constants
-    MAX_MULTISIG_KEYS, MAX_TX_INPUTS, MAX_TX_OUTPUTS, MAX_BLOCK_TXS, MAX_SERIALIZE_BYTES,
-    COINBASE_MATURITY, DIFFICULTY_COEFFICIENT_MASK, MAX_FUTURE_BLOCK_TIME,
+};
+
+// Re-export constants
+pub use constants::{
+    // Protocol constants
+    MAX_BLOCK_TXS, MAX_TX_INPUTS, MAX_TX_OUTPUTS, MAX_MULTISIG_KEYS, MAX_SERIALIZE_BYTES,
+    MAX_BLOCK_SIZE, COINBASE_MATURITY, DIFFICULTY_COEFFICIENT_MASK, MAX_FUTURE_BLOCK_TIME,
+    // Network constants
+    DEFAULT_PORT, MAX_PEERS, MAX_OUTBOUND, MAX_ORPHAN_BLOCKS, MAX_BLOCKS_IN_FLIGHT,
+    MAX_PENDING_HEADERS, MAX_HEADERS_COUNT, MAX_CONNECTIONS_PER_IP, CONNECTION_RATE_LIMIT_SECS,
+    BAN_DURATION_SECS, BAN_SCORE_THRESHOLD,
+    // Mining constants
+    DEFAULT_DIFFICULTY, INITIAL_REWARD, DIFFICULTY_INTERVAL, TARGET_BLOCK_TIME, HALVING_INTERVAL,
 };
 
 pub use crypto::{Hash, PublicKey, SecretKey, Signature, hash, hash_many};
+
+pub use mempool::{Mempool, MempoolError};
+pub use miner::{mine_block, BackgroundMiner, MineResult};

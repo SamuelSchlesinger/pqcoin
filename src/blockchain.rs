@@ -30,36 +30,14 @@
 //! [`Deserialize`] traits. The format is compact and uses little-endian byte order for
 //! multi-byte integers.
 
+use crate::constants::{
+    COINBASE_MATURITY, DIFFICULTY_COEFFICIENT_MASK, MAX_BLOCK_SIZE, MAX_BLOCK_TXS,
+    MAX_FUTURE_BLOCK_TIME, MAX_MULTISIG_KEYS, MAX_REORG_DEPTH, MAX_SERIALIZE_BYTES,
+    MAX_TX_INPUTS, MAX_TX_OUTPUTS,
+};
 use crate::crypto::{self, Hash, PublicKey, Signature};
+use rayon::prelude::*;
 use std::collections::HashMap;
-
-// ============================================================================
-// Constants
-// ============================================================================
-
-/// Maximum number of public keys allowed in a multisig output.
-pub const MAX_MULTISIG_KEYS: u64 = 100;
-
-/// Maximum number of inputs allowed in a single transaction.
-pub const MAX_TX_INPUTS: u64 = 10_000;
-
-/// Maximum number of outputs allowed in a single transaction.
-pub const MAX_TX_OUTPUTS: u64 = 10_000;
-
-/// Maximum number of transactions allowed in a single block.
-pub const MAX_BLOCK_TXS: u64 = 100_000;
-
-/// Maximum size in bytes for variable-length serialized data.
-pub const MAX_SERIALIZE_BYTES: u64 = 1_000_000;
-
-/// Number of blocks before coinbase outputs can be spent.
-pub const COINBASE_MATURITY: u64 = 100;
-
-/// Bitmask for extracting the coefficient from difficulty bits.
-pub const DIFFICULTY_COEFFICIENT_MASK: u32 = 0x00FFFFFF;
-
-/// Maximum allowed time (in seconds) that a block timestamp can be in the future.
-pub const MAX_FUTURE_BLOCK_TIME: u64 = 2 * 60 * 60; // 2 hours
 
 // ============================================================================
 // Serialization Traits
@@ -207,7 +185,7 @@ fn read_var_int(data: &[u8]) -> Result<(u64, &[u8]), DeserializeError> {
 
 fn read_bytes(data: &[u8]) -> Result<(Vec<u8>, &[u8]), DeserializeError> {
     let (len, data) = read_var_int(data)?;
-    if len > MAX_SERIALIZE_BYTES {
+    if len > MAX_SERIALIZE_BYTES as u64 {
         return Err(DeserializeError::LengthOverflow);
     }
     let len = len as usize;
@@ -466,7 +444,7 @@ impl Deserialize for Witness {
             }
             0x01 => {
                 let (num_keys, data) = read_var_int(data)?;
-                if num_keys > MAX_MULTISIG_KEYS {
+                if num_keys > MAX_MULTISIG_KEYS as u64 {
                     return Err(DeserializeError::LengthOverflow);
                 }
                 let mut public_keys = Vec::with_capacity(num_keys as usize);
@@ -479,7 +457,7 @@ impl Deserialize for Witness {
                     data = rest;
                 }
                 let (num_sigs, data) = read_var_int(data)?;
-                if num_sigs > MAX_MULTISIG_KEYS {
+                if num_sigs > MAX_MULTISIG_KEYS as u64 {
                     return Err(DeserializeError::LengthOverflow);
                 }
                 let mut signatures = Vec::with_capacity(num_sigs as usize);
@@ -659,7 +637,7 @@ impl Deserialize for LockingCondition {
             0x01 => {
                 let (threshold, data) = read_u8(data)?;
                 let (num_keys, data) = read_var_int(data)?;
-                if num_keys > MAX_MULTISIG_KEYS {
+                if num_keys > MAX_MULTISIG_KEYS as u64 {
                     return Err(DeserializeError::LengthOverflow);
                 }
                 if threshold == 0 || (threshold as u64) > num_keys {
@@ -868,7 +846,7 @@ impl Deserialize for Transaction {
     fn deserialize(data: &[u8]) -> Result<(Self, &[u8]), DeserializeError> {
         let (version, data) = read_u32(data)?;
         let (num_inputs, data) = read_var_int(data)?;
-        if num_inputs > MAX_TX_INPUTS {
+        if num_inputs > MAX_TX_INPUTS as u64 {
             return Err(DeserializeError::LengthOverflow);
         }
         let mut inputs = Vec::with_capacity(num_inputs as usize);
@@ -879,7 +857,7 @@ impl Deserialize for Transaction {
             data = rest;
         }
         let (num_outputs, data) = read_var_int(data)?;
-        if num_outputs > MAX_TX_OUTPUTS {
+        if num_outputs > MAX_TX_OUTPUTS as u64 {
             return Err(DeserializeError::LengthOverflow);
         }
         let mut outputs = Vec::with_capacity(num_outputs as usize);
@@ -976,18 +954,38 @@ impl BlockHeader {
             return target;
         }
 
-        // The coefficient is a 3-byte big-endian number placed at position
-        // (64 - exponent) in the target array
-        let coef_bytes = [
-            ((coefficient >> 16) & 0xFF) as u8,
-            ((coefficient >> 8) & 0xFF) as u8,
-            (coefficient & 0xFF) as u8,
-        ];
+        // The target formula is: target = coefficient * 2^(8 * (exponent - 3))
+        // The coefficient is a 3-byte big-endian number placed at position (64 - exponent)
 
-        let start = 64usize.saturating_sub(exponent);
-        for (i, &byte) in coef_bytes.iter().enumerate() {
-            if start + i < 64 {
-                target[start + i] = byte;
+        if exponent >= 3 {
+            // Normal case: coefficient fits in target array
+            let coef_bytes = [
+                ((coefficient >> 16) & 0xFF) as u8,
+                ((coefficient >> 8) & 0xFF) as u8,
+                (coefficient & 0xFF) as u8,
+            ];
+
+            let start = 64usize.saturating_sub(exponent);
+            for (i, &byte) in coef_bytes.iter().enumerate() {
+                if start + i < 64 {
+                    target[start + i] = byte;
+                }
+            }
+        } else {
+            // Very easy target - coefficient shifted right
+            // This case is rare (exponent 1 or 2) and represents extremely easy difficulty
+            // Shift coefficient right by (3 - exponent) bytes
+            let shift_bytes = 3 - exponent;
+            let shifted_coef = coefficient >> (8 * shift_bytes);
+
+            // Place the remaining coefficient bytes at the end of the array
+            if shift_bytes == 2 {
+                // exponent = 1: only 1 byte of coefficient remains
+                target[63] = (shifted_coef & 0xFF) as u8;
+            } else if shift_bytes == 1 {
+                // exponent = 2: 2 bytes of coefficient remain
+                target[62] = ((shifted_coef >> 8) & 0xFF) as u8;
+                target[63] = (shifted_coef & 0xFF) as u8;
             }
         }
 
@@ -1200,7 +1198,7 @@ impl Deserialize for Block {
     fn deserialize(data: &[u8]) -> Result<(Self, &[u8]), DeserializeError> {
         let (header, data) = BlockHeader::deserialize(data)?;
         let (num_txs, data) = read_var_int(data)?;
-        if num_txs > MAX_BLOCK_TXS {
+        if num_txs > MAX_BLOCK_TXS as u64 {
             return Err(DeserializeError::LengthOverflow);
         }
         let mut transactions = Vec::with_capacity(num_txs as usize);
@@ -1243,6 +1241,22 @@ pub enum BlockchainError {
     InvalidTimestamp,
     /// The block difficulty doesn't match the expected value.
     InvalidDifficulty,
+    /// Fee calculation would overflow.
+    FeeOverflow,
+    /// Block serialized size exceeds maximum.
+    BlockTooLarge,
+    /// Attempted to spend an immature coinbase output.
+    ImmatureCoinbase {
+        outpoint: OutPoint,
+        current_height: u64,
+        maturity_height: u64,
+    },
+    /// Reorg depth exceeds maximum allowed.
+    ReorgTooDeep(u64),
+    /// Transaction has too many inputs.
+    TooManyInputs(usize),
+    /// Transaction has too many outputs.
+    TooManyOutputs(usize),
 }
 
 impl std::fmt::Display for BlockchainError {
@@ -1259,6 +1273,15 @@ impl std::fmt::Display for BlockchainError {
             BlockchainError::DoubleSpend(op) => write!(f, "double spend: {:?}", op),
             BlockchainError::InvalidTimestamp => write!(f, "invalid timestamp"),
             BlockchainError::InvalidDifficulty => write!(f, "invalid difficulty"),
+            BlockchainError::FeeOverflow => write!(f, "fee calculation overflow"),
+            BlockchainError::BlockTooLarge => write!(f, "block exceeds maximum size"),
+            BlockchainError::ImmatureCoinbase { outpoint, current_height, maturity_height } => {
+                write!(f, "immature coinbase: {:?} (current height {}, matures at {})",
+                    outpoint, current_height, maturity_height)
+            }
+            BlockchainError::ReorgTooDeep(depth) => write!(f, "reorg too deep: {} blocks", depth),
+            BlockchainError::TooManyInputs(count) => write!(f, "too many inputs: {}", count),
+            BlockchainError::TooManyOutputs(count) => write!(f, "too many outputs: {}", count),
         }
     }
 }
@@ -1400,6 +1423,44 @@ impl Blockchain {
         self.heights.get(hash).copied()
     }
 
+    /// Alias for get_height (used by sync module).
+    pub fn height_of(&self, hash: &Hash) -> Option<u64> {
+        self.get_height(hash)
+    }
+
+    /// Check if we have a block.
+    pub fn has_block(&self, hash: &Hash) -> bool {
+        self.blocks.contains_key(hash)
+    }
+
+    /// Get the block hash at a specific height.
+    ///
+    /// This walks back from the tip, so it's O(height) in the worst case.
+    pub fn hash_at_height(&self, target_height: u64) -> Option<Hash> {
+        if target_height > self.tip_height {
+            return None;
+        }
+
+        let mut current_hash = self.tip;
+        let mut current_height = self.tip_height;
+
+        while current_height > target_height {
+            if let Some(block) = self.blocks.get(&current_hash) {
+                current_hash = block.header.prev_hash;
+                current_height -= 1;
+            } else {
+                return None;
+            }
+        }
+
+        Some(current_hash)
+    }
+
+    /// Alias for hash_at_height (used by sync module).
+    pub fn block_hash_at_height(&self, height: u64) -> Option<Hash> {
+        self.hash_at_height(height)
+    }
+
     /// Get a UTXO by its outpoint.
     pub fn get_utxo(&self, outpoint: &OutPoint) -> Option<&Utxo> {
         self.utxos.get(outpoint)
@@ -1413,6 +1474,74 @@ impl Blockchain {
         } else {
             self.initial_reward >> halvings
         }
+    }
+
+    /// Calculate the expected difficulty for a block at a given height.
+    ///
+    /// This validates that a block has the correct difficulty based on its position
+    /// in the chain and the difficulty adjustment schedule.
+    fn expected_difficulty_at(&self, height: u64, prev_hash: Hash) -> u32 {
+        let prev_block = match self.blocks.get(&prev_hash) {
+            Some(b) => b,
+            None => return 0, // Unknown parent, can't calculate
+        };
+
+        // If not at an adjustment boundary, use the same difficulty as parent
+        if height % self.difficulty_adjustment_interval != 0 {
+            return prev_block.header.difficulty_bits;
+        }
+
+        // At adjustment boundary - need to calculate new difficulty
+        // Find the block at the start of this adjustment period
+        let period_start_height = height.saturating_sub(self.difficulty_adjustment_interval);
+        let mut block_hash = prev_hash;
+
+        // Walk back to find the period start block
+        let steps = height.saturating_sub(1).saturating_sub(period_start_height);
+        for _ in 0..steps {
+            if let Some(block) = self.blocks.get(&block_hash) {
+                block_hash = block.header.prev_hash;
+            } else {
+                return prev_block.header.difficulty_bits;
+            }
+        }
+
+        let period_start = match self.blocks.get(&block_hash) {
+            Some(b) => b,
+            None => return prev_block.header.difficulty_bits,
+        };
+
+        // Calculate actual time taken for this period
+        let actual_time = prev_block.header.timestamp.saturating_sub(period_start.header.timestamp);
+        let target_time = self.target_block_time * self.difficulty_adjustment_interval;
+
+        // Clamp adjustment to 4x in either direction
+        let actual_time = actual_time.max(target_time / 4).min(target_time * 4);
+
+        // Scale the difficulty
+        let current_bits = prev_block.header.difficulty_bits;
+        let exponent = current_bits >> 24;
+        let coefficient = (current_bits & DIFFICULTY_COEFFICIENT_MASK) as u64;
+
+        let scaled = (coefficient * actual_time) / target_time;
+
+        let (new_exponent, new_coefficient) = if scaled == 0 {
+            (1u32, 1u32)
+        } else if scaled > 0x7FFFFF {
+            let shift = 64 - scaled.leading_zeros();
+            let extra_bytes = (shift.saturating_sub(23) + 7) / 8;
+            let new_exp = exponent.saturating_add(extra_bytes);
+            let new_coef = (scaled >> (extra_bytes * 8)) as u32;
+            if new_exp > 64 {
+                (64u32, 0x7FFFFFu32)
+            } else {
+                (new_exp, new_coef.min(0x7FFFFF))
+            }
+        } else {
+            (exponent, scaled as u32)
+        };
+
+        (new_exponent << 24) | new_coefficient
     }
 
     /// Calculate the expected difficulty for a new block.
@@ -1494,6 +1623,112 @@ impl Blockchain {
         (new_exponent << 24) | new_coefficient
     }
 
+    /// Verify signatures for a batch of transactions in parallel.
+    ///
+    /// Uses rayon to verify multiple transaction signatures concurrently for better performance.
+    fn verify_transactions_parallel(
+        &self,
+        transactions: &[Transaction],
+        height: u64,
+    ) -> Result<Vec<u64>, BlockchainError> {
+        // Collect verification data for all transactions first
+        let verify_data: Vec<_> = transactions
+            .iter()
+            .map(|tx| {
+                let mut input_data = Vec::new();
+                for (input_index, input) in tx.inputs.iter().enumerate() {
+                    let utxo = self.utxos.get(&input.outpoint);
+                    let signing_data = tx.signing_data(input_index);
+                    let message = crypto::hash(&signing_data);
+                    input_data.push((input_index, utxo.cloned(), message, input.witness.clone()));
+                }
+                (tx, input_data)
+            })
+            .collect();
+
+        // Verify all signatures in parallel
+        let results: Vec<Result<u64, BlockchainError>> = verify_data
+            .par_iter()
+            .map(|(tx, input_data)| {
+                if tx.is_coinbase() {
+                    return Ok(0);
+                }
+
+                let mut input_sum = 0u64;
+
+                for (input_index, utxo_opt, message, witness) in input_data {
+                    let utxo = utxo_opt
+                        .as_ref()
+                        .ok_or(BlockchainError::MissingInput(tx.inputs[*input_index].outpoint))?;
+
+                    // Coinbase outputs need maturity before they can be spent
+                    if utxo.is_coinbase && height < utxo.height + COINBASE_MATURITY {
+                        return Err(BlockchainError::ImmatureCoinbase {
+                            outpoint: tx.inputs[*input_index].outpoint,
+                            current_height: height,
+                            maturity_height: utxo.height + COINBASE_MATURITY,
+                        });
+                    }
+
+                    input_sum = input_sum
+                        .checked_add(utxo.output.amount)
+                        .ok_or(BlockchainError::InsufficientInputs)?;
+
+                    // Verify the witness matches the locking condition
+                    match (&utxo.output.condition, witness) {
+                        (LockingCondition::P2PKH(address), Witness::P2PKH { public_key, signature }) => {
+                            if Address::from_public_key(public_key) != *address {
+                                return Err(BlockchainError::InvalidWitness);
+                            }
+                            if !crypto::ml_dsa_87::verify(public_key, message.as_bytes(), signature) {
+                                return Err(BlockchainError::InvalidWitness);
+                            }
+                        }
+                        (
+                            LockingCondition::Multisig { threshold, public_keys },
+                            Witness::Multisig {
+                                public_keys: witness_keys,
+                                signatures,
+                            },
+                        ) => {
+                            if witness_keys.len() != public_keys.len() {
+                                return Err(BlockchainError::InvalidWitness);
+                            }
+                            for (wk, pk) in witness_keys.iter().zip(public_keys.iter()) {
+                                if wk.to_bytes() != pk.to_bytes() {
+                                    return Err(BlockchainError::InvalidWitness);
+                                }
+                            }
+                            let mut valid_sigs = 0u8;
+                            for (i, sig_opt) in signatures.iter().enumerate() {
+                                if let Some(sig) = sig_opt {
+                                    if i < public_keys.len()
+                                        && crypto::ml_dsa_87::verify(
+                                            &public_keys[i],
+                                            message.as_bytes(),
+                                            sig,
+                                        )
+                                    {
+                                        valid_sigs += 1;
+                                    }
+                                }
+                            }
+                            if valid_sigs < *threshold {
+                                return Err(BlockchainError::InvalidWitness);
+                            }
+                        }
+                        _ => return Err(BlockchainError::InvalidWitness),
+                    }
+                }
+
+                Ok(input_sum)
+            })
+            .collect();
+
+        // Collect results, returning first error if any
+        results.into_iter().collect()
+    }
+
     /// Verify a transaction's signatures.
     ///
     /// # Signature Verification Design
@@ -1526,7 +1761,11 @@ impl Blockchain {
 
             // Coinbase outputs need maturity before they can be spent
             if utxo.is_coinbase && height < utxo.height + COINBASE_MATURITY {
-                return Err(BlockchainError::MissingInput(input.outpoint));
+                return Err(BlockchainError::ImmatureCoinbase {
+                    outpoint: input.outpoint,
+                    current_height: height,
+                    maturity_height: utxo.height + COINBASE_MATURITY,
+                });
             }
 
             input_sum = input_sum
@@ -1602,6 +1841,12 @@ impl Blockchain {
             return Ok(false);
         }
 
+        // Check block size limit to prevent memory exhaustion attacks
+        let block_size = block.to_bytes().len();
+        if block_size > MAX_BLOCK_SIZE {
+            return Err(BlockchainError::BlockTooLarge);
+        }
+
         // Check previous block exists
         let prev_height = self
             .heights
@@ -1628,6 +1873,15 @@ impl Blockchain {
             .unwrap_or(0);
         if block.header.timestamp > current_time + MAX_FUTURE_BLOCK_TIME {
             return Err(BlockchainError::InvalidTimestamp);
+        }
+
+        // Verify difficulty matches expected value for this height
+        // Skip check for genesis block (height 0) which has no parent for calculation
+        if height > 0 {
+            let expected_difficulty = self.expected_difficulty_at(height, block.header.prev_hash);
+            if block.header.difficulty_bits != expected_difficulty {
+                return Err(BlockchainError::InvalidDifficulty);
+            }
         }
 
         // Verify proof of work
@@ -1657,13 +1911,19 @@ impl Blockchain {
             }
         }
 
-        // Track spent outputs to detect double-spends within the block
-        let mut spent_in_block = HashMap::new();
-        let mut total_fees = 0u64;
+        // Validate transaction input/output counts
+        for tx in &block.transactions {
+            if tx.inputs.len() > MAX_TX_INPUTS {
+                return Err(BlockchainError::TooManyInputs(tx.inputs.len()));
+            }
+            if tx.outputs.len() > MAX_TX_OUTPUTS {
+                return Err(BlockchainError::TooManyOutputs(tx.outputs.len()));
+            }
+        }
 
-        // Verify each non-coinbase transaction
+        // Track spent outputs to detect double-spends within the block (must be sequential)
+        let mut spent_in_block = HashMap::new();
         for tx in block.transactions.iter().skip(1) {
-            // Check for double-spends
             for input in &tx.inputs {
                 if spent_in_block.contains_key(&input.outpoint) {
                     return Err(BlockchainError::DoubleSpend(input.outpoint));
@@ -1673,21 +1933,31 @@ impl Blockchain {
                 }
                 spent_in_block.insert(input.outpoint, ());
             }
-
-            let input_sum = self.verify_transaction(tx, height)?;
-            let output_sum = tx.total_output();
-
-            if input_sum < output_sum {
-                return Err(BlockchainError::InsufficientInputs);
-            }
-
-            total_fees += input_sum - output_sum;
         }
 
-        // Verify coinbase amount
+        // Verify all non-coinbase transactions in parallel for better performance
+        let non_coinbase_txs: Vec<_> = block.transactions.iter().skip(1).cloned().collect();
+        let input_sums = self.verify_transactions_parallel(&non_coinbase_txs, height)?;
+
+        // Calculate total fees (must be sequential for checked arithmetic)
+        let mut total_fees = 0u64;
+        for (tx, input_sum) in non_coinbase_txs.iter().zip(input_sums.iter()) {
+            let output_sum = tx.total_output();
+            let fee = input_sum
+                .checked_sub(output_sum)
+                .ok_or(BlockchainError::InsufficientInputs)?;
+            total_fees = total_fees
+                .checked_add(fee)
+                .ok_or(BlockchainError::FeeOverflow)?;
+        }
+
+        // Verify coinbase amount using checked arithmetic
         let expected_reward = self.block_reward(height);
         let coinbase_output = block.transactions[0].total_output();
-        if coinbase_output > expected_reward + total_fees {
+        let max_coinbase = expected_reward
+            .checked_add(total_fees)
+            .ok_or(BlockchainError::FeeOverflow)?;
+        if coinbase_output > max_coinbase {
             return Err(BlockchainError::InvalidCoinbase);
         }
 
@@ -1695,38 +1965,199 @@ impl Blockchain {
         self.blocks.insert(block_hash, block.clone());
         self.heights.insert(block_hash, height);
 
-        // Check if this extends the main chain
+        // Check if this creates a longer chain (potential reorg)
         if height > self.tip_height {
-            // Update UTXO set
-            // Remove spent outputs
-            for tx in block.transactions.iter().skip(1) {
-                for input in &tx.inputs {
-                    self.utxos.remove(&input.outpoint);
-                }
+            // Check if this extends the current tip (no reorg needed)
+            if block.header.prev_hash == self.tip {
+                // Simple case: extends current chain
+                self.apply_block(&block, height);
+                self.tip = block_hash;
+                self.tip_height = height;
+                Ok(true)
+            } else {
+                // Reorg needed: new chain is longer but doesn't extend current tip
+                self.reorganize_to(block_hash, height)?;
+                Ok(true)
             }
-
-            // Add new outputs
-            for (i, tx) in block.transactions.iter().enumerate() {
-                let txid = tx.txid();
-                for (j, output) in tx.outputs.iter().enumerate() {
-                    let outpoint = OutPoint::new(txid, j as u32);
-                    self.utxos.insert(
-                        outpoint,
-                        Utxo {
-                            output: output.clone(),
-                            height,
-                            is_coinbase: i == 0,
-                        },
-                    );
-                }
-            }
-
-            self.tip = block_hash;
-            self.tip_height = height;
-            Ok(true)
         } else {
+            // Side chain block, stored but doesn't change tip
             Ok(false)
         }
+    }
+
+    /// Apply a block's effects to the UTXO set (add outputs, remove inputs).
+    fn apply_block(&mut self, block: &Block, height: u64) {
+        // Remove spent outputs
+        for tx in block.transactions.iter().skip(1) {
+            for input in &tx.inputs {
+                self.utxos.remove(&input.outpoint);
+            }
+        }
+
+        // Add new outputs
+        for (i, tx) in block.transactions.iter().enumerate() {
+            let txid = tx.txid();
+            for (j, output) in tx.outputs.iter().enumerate() {
+                let outpoint = OutPoint::new(txid, j as u32);
+                self.utxos.insert(
+                    outpoint,
+                    Utxo {
+                        output: output.clone(),
+                        height,
+                        is_coinbase: i == 0,
+                    },
+                );
+            }
+        }
+    }
+
+    /// Unapply a block's effects from the UTXO set (remove outputs, restore inputs).
+    fn unapply_block(&mut self, block: &Block, height: u64) {
+        // Remove outputs added by this block
+        for tx in block.transactions.iter() {
+            let txid = tx.txid();
+            for j in 0..tx.outputs.len() {
+                let outpoint = OutPoint::new(txid, j as u32);
+                self.utxos.remove(&outpoint);
+            }
+        }
+
+        // Restore spent inputs (we need to look them up from their source transactions)
+        for tx in block.transactions.iter().skip(1) {
+            for input in &tx.inputs {
+                // Find the transaction that created this output
+                if let Some(source_block) = self.find_block_containing_tx(&input.outpoint.txid) {
+                    let source_height = *self.heights.get(&source_block.hash()).unwrap_or(&0);
+                    if let Some(source_tx) = source_block.transactions.iter()
+                        .find(|t| t.txid() == input.outpoint.txid)
+                    {
+                        if let Some(output) = source_tx.outputs.get(input.outpoint.index as usize) {
+                            let is_coinbase = source_block.transactions.first()
+                                .map(|t| t.txid() == input.outpoint.txid)
+                                .unwrap_or(false);
+                            self.utxos.insert(
+                                input.outpoint,
+                                Utxo {
+                                    output: output.clone(),
+                                    height: source_height,
+                                    is_coinbase,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Find the block containing a specific transaction.
+    fn find_block_containing_tx(&self, txid: &Hash) -> Option<&Block> {
+        for block in self.blocks.values() {
+            if block.transactions.iter().any(|tx| tx.txid() == *txid) {
+                return Some(block);
+            }
+        }
+        None
+    }
+
+    /// Find the common ancestor of two block hashes.
+    fn find_common_ancestor(&self, hash1: Hash, hash2: Hash) -> Option<Hash> {
+        let mut ancestors1 = std::collections::HashSet::new();
+        let mut current = hash1;
+
+        // Collect all ancestors of hash1
+        while let Some(block) = self.blocks.get(&current) {
+            ancestors1.insert(current);
+            if current == self.genesis_hash {
+                break;
+            }
+            current = block.header.prev_hash;
+        }
+
+        // Walk back from hash2 until we find a common ancestor
+        current = hash2;
+        while let Some(block) = self.blocks.get(&current) {
+            if ancestors1.contains(&current) {
+                return Some(current);
+            }
+            if current == self.genesis_hash {
+                break;
+            }
+            current = block.header.prev_hash;
+        }
+
+        None
+    }
+
+    /// Get the chain of blocks from a hash back to (but not including) an ancestor.
+    fn get_chain_segment(&self, from: Hash, to: Hash) -> Vec<Hash> {
+        let mut chain = Vec::new();
+        let mut current = from;
+
+        while current != to {
+            chain.push(current);
+            if let Some(block) = self.blocks.get(&current) {
+                current = block.header.prev_hash;
+            } else {
+                break;
+            }
+        }
+
+        chain.reverse();
+        chain
+    }
+
+    /// Reorganize the chain to a new tip.
+    fn reorganize_to(&mut self, new_tip: Hash, new_height: u64) -> Result<(), BlockchainError> {
+        let old_tip = self.tip;
+
+        // Find common ancestor
+        let fork_point = self.find_common_ancestor(old_tip, new_tip)
+            .ok_or(BlockchainError::UnknownPreviousBlock)?;
+
+        // Get blocks to unapply (old chain from tip back to fork point)
+        let old_chain = self.get_chain_segment(old_tip, fork_point);
+
+        // Check reorg depth to prevent long-range attacks
+        let reorg_depth = old_chain.len() as u64;
+        if reorg_depth > MAX_REORG_DEPTH {
+            tracing::warn!(
+                reorg_depth = reorg_depth,
+                max_allowed = MAX_REORG_DEPTH,
+                "rejecting deep reorg"
+            );
+            return Err(BlockchainError::ReorgTooDeep(reorg_depth));
+        }
+
+        // Get blocks to apply (new chain from fork point to new tip)
+        let new_chain = self.get_chain_segment(new_tip, fork_point);
+
+        tracing::info!(
+            old_chain_len = old_chain.len(),
+            new_chain_len = new_chain.len(),
+            "performing chain reorganization"
+        );
+
+        // Unapply old blocks (in reverse order, from tip to fork point)
+        for hash in old_chain.iter().rev() {
+            if let Some(block) = self.blocks.get(hash).cloned() {
+                let height = *self.heights.get(hash).unwrap_or(&0);
+                self.unapply_block(&block, height);
+            }
+        }
+
+        // Apply new blocks (in order, from fork point to new tip)
+        for hash in &new_chain {
+            if let Some(block) = self.blocks.get(hash).cloned() {
+                let height = *self.heights.get(hash).unwrap_or(&0);
+                self.apply_block(&block, height);
+            }
+        }
+
+        self.tip = new_tip;
+        self.tip_height = new_height;
+
+        Ok(())
     }
 
     /// Get the chain of block hashes from genesis to tip.
@@ -1764,6 +2195,19 @@ impl Blockchain {
             .iter()
             .map(|(_, utxo)| utxo.output.amount)
             .sum()
+    }
+
+    /// Get an iterator over all blocks in the blockchain.
+    pub fn all_blocks(&self) -> impl Iterator<Item = &Block> {
+        self.blocks.values()
+    }
+
+    /// Check if a transaction exists in the blockchain.
+    ///
+    /// This is a relatively expensive operation as it searches all blocks.
+    /// Consider caching transaction indices for frequent lookups.
+    pub fn has_transaction(&self, txid: &Hash) -> bool {
+        self.find_block_containing_tx(txid).is_some()
     }
 }
 
@@ -2623,7 +3067,7 @@ mod tests {
         // This should fail because the coinbase is immature
         let block2 = create_block_with_txs(&chain, vec![tx], recipient_address);
         let result = chain.add_block(block2);
-        assert!(matches!(result, Err(BlockchainError::MissingInput(_))));
+        assert!(matches!(result, Err(BlockchainError::ImmatureCoinbase { .. })));
     }
 
     #[test]

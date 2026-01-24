@@ -8,5 +8,43 @@ sha3 = "0.10"
 pqcrypto-dilithium = "0.5"
 pqcrypto-traits = "0.3"
 hex = "0.4"
+tokio = { version = "1", features = ["full"] }
+bytes = "1"
+thiserror = "1"
+tracing = "0.1"
+bitflags = "2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+rayon = "1.10"
+
+# Phase 1: Configuration & CLI
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+dirs = "5"
+clap = { version = "4", features = ["derive"] }
+
+# Phase 2: Metrics & Monitoring
+axum = "0.7"
+prometheus-client = "0.22"
+serde_json = "1"
+
+# Phase 3: JSON-RPC API
+jsonrpsee = { version = "0.24", features = ["server", "macros", "client"] }
+
+# Phase 4: Wallet
+aes-gcm = "0.10"
+argon2 = "0.5"
+rand = "0.8"
+zeroize = { version = "1", features = ["derive"] }
+base64 = "0.22"
+reqwest = { version = "0.12", features = ["json"] }
 
 [dev-dependencies]
+tempfile = "3"
+
+[[bin]]
+name = "pqcoin"
+path = "src/main.rs"
+
+[[bin]]
+name = "pqwallet"
+path = "src/bin/pqwallet.rs"
