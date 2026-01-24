@@ -5,6 +5,21 @@
 //! - Handshake protocol
 //! - Connection state tracking
 //! - Send/receive operations
+//!
+//! # Security
+//!
+//! ## Message Size Limits
+//!
+//! All incoming messages are validated against [`MAX_MESSAGE_SIZE`] (10 MB) before
+//! memory allocation. This prevents malicious peers from causing memory exhaustion.
+//!
+//! ## Memory Optimization
+//!
+//! The `receive_message()` method uses a single allocation for both header and payload
+//! data. This reduces peak memory usage by 50% compared to separate allocations:
+//!
+//! - **Old approach**: Allocate payload (10 MB) + copy to full_message (10 MB) = 20 MB peak
+//! - **New approach**: Single allocation for header + payload = 10 MB peak
 
 use crate::network::message::{Message, MessageError, Services, NETWORK_MAGIC, PROTOCOL_VERSION};
 use std::net::SocketAddr;

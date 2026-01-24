@@ -29,6 +29,21 @@
 //! All structures implement deterministic binary serialization via the [`Serialize`] and
 //! [`Deserialize`] traits. The format is compact and uses little-endian byte order for
 //! multi-byte integers.
+//!
+//! ## Performance Optimizations
+//!
+//! ### Transaction Index
+//!
+//! The [`Blockchain`] struct maintains a `tx_index` mapping transaction IDs to block hashes.
+//! This enables O(1) lookups when finding which block contains a transaction, which is
+//! critical for efficient chain reorganizations.
+//!
+//! Without this index, `find_block_containing_tx()` would need to scan all blocks and all
+//! transactions within each block (O(n*m) complexity). With the index, lookups are O(1).
+//!
+//! The index is automatically maintained:
+//! - Entries are added when blocks are applied via `apply_block()`
+//! - Entries are removed when blocks are unapplied via `unapply_block()`
 
 use crate::constants::{
     COINBASE_MATURITY, DIFFICULTY_COEFFICIENT_MASK, MAX_BLOCK_SIZE, MAX_BLOCK_TXS,

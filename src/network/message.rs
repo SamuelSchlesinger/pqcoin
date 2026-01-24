@@ -2,6 +2,20 @@
 //!
 //! This module defines the P2P protocol messages for pqcoin network communication.
 //! Messages use a simple length-prefixed framing format.
+//!
+//! # Security: Size Limits
+//!
+//! All variable-length fields have explicit size limits to prevent memory exhaustion:
+//!
+//! | Constant | Limit | Purpose |
+//! |----------|-------|---------|
+//! | `MAX_ADDR_COUNT` | 1,000 | Addresses per Addr/AddrV2 message |
+//! | `MAX_INV_COUNT` | 50,000 | Items per Inv/GetData message |
+//! | `MAX_LOCATOR_COUNT` | 101 | Block locators per GetHeaders |
+//! | `MAX_HEADERS_COUNT` | 2,000 | Headers per Headers message |
+//! | `MAX_STRING_SIZE` | 1 MB | Variable-length strings (user agent, etc.) |
+//!
+//! These limits are enforced during deserialization, before memory allocation.
 
 use crate::blockchain::{Block, BlockHeader, Deserialize, DeserializeError, Serialize, Transaction};
 use crate::constants::MAX_HEADERS_COUNT;
