@@ -387,6 +387,12 @@ impl Deserialize for OutPoint {
 /// spending conditions of a transaction output.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Witness {
+    /// Witness for a coinbase input: arbitrary data (e.g., block height, extra nonce).
+    ///
+    /// Coinbase witnesses don't prove authorization (there's nothing to spend),
+    /// they just carry metadata. This avoids the overhead of generating unused
+    /// cryptographic keys.
+    Coinbase(Vec<u8>),
     /// Witness for a P2PKH output: public key + signature.
     P2PKH {
         /// The public key (must hash to the address in the output).
@@ -407,6 +413,10 @@ pub enum Witness {
 impl Serialize for Witness {
     fn serialize(&self, buf: &mut Vec<u8>) {
         match self {
+            Witness::Coinbase(data) => {
+                write_u8(buf, 0x02); // Type tag
+                write_bytes(buf, data);
+            }
             Witness::P2PKH {
                 public_key,
                 signature,
@@ -489,6 +499,10 @@ impl Deserialize for Witness {
                 }
                 Ok((Witness::Multisig { public_keys, signatures }, data))
             }
+            0x02 => {
+                let (coinbase_data, data) = read_bytes(data)?;
+                Ok((Witness::Coinbase(coinbase_data), data))
+            }
             _ => Err(DeserializeError::InvalidData(format!("unknown witness type: {}", tag))),
         }
     }
@@ -531,20 +545,13 @@ impl TxInput {
 
     /// Create a coinbase input with arbitrary data.
     ///
-    /// Coinbase inputs have a null outpoint and a P2PKH witness where the
-    /// "public key" and "signature" fields contain arbitrary data (often
-    /// used for the block height and extra nonce).
+    /// Coinbase inputs have a null outpoint and a [`Witness::Coinbase`] that
+    /// carries arbitrary data (typically the block height and extra nonce).
+    /// This avoids the overhead of generating unused cryptographic keys.
     pub fn coinbase(data: &[u8]) -> Self {
-        // Create a dummy witness with the data encoded
-        // We'll use a minimal valid-looking structure
-        let (pk, sk) = crypto::ml_dsa_87::keygen();
-        let sig = crypto::ml_dsa_87::sign(&sk, data);
         Self {
             outpoint: OutPoint::null(),
-            witness: Witness::P2PKH {
-                public_key: pk,
-                signature: sig,
-            },
+            witness: Witness::Coinbase(data.to_vec()),
         }
     }
 
@@ -1895,6 +1902,22 @@ mod tests {
             Witness::P2PKH { public_key, signature } => {
                 // Verify signature still works after serialization roundtrip
                 assert!(crypto::ml_dsa_87::verify(&public_key, message, &signature));
+            }
+            _ => panic!("wrong witness type"),
+        }
+    }
+
+    #[test]
+    fn test_witness_coinbase_serialization() {
+        let data = b"block height 12345";
+        let witness = Witness::Coinbase(data.to_vec());
+
+        let bytes = witness.to_bytes();
+        let decoded = Witness::from_bytes(&bytes).unwrap();
+
+        match decoded {
+            Witness::Coinbase(decoded_data) => {
+                assert_eq!(decoded_data, data);
             }
             _ => panic!("wrong witness type"),
         }
