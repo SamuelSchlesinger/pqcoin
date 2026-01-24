@@ -45,7 +45,7 @@ use sha3::{Digest, Sha3_512 as Sha3_512Hasher};
 /// assert_eq!(digest.as_bytes().len(), 64);
 /// println!("{}", digest.to_hex());
 /// ```
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Hash([u8; 64]);
 
 impl Hash {
@@ -149,6 +149,20 @@ pub mod ml_dsa_87 {
     #[derive(Clone)]
     pub struct PublicKey(dilithium5::PublicKey);
 
+    impl std::fmt::Debug for PublicKey {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "PublicKey({}...)", hex::encode(&self.0.as_bytes()[..8]))
+        }
+    }
+
+    impl PartialEq for PublicKey {
+        fn eq(&self, other: &Self) -> bool {
+            self.0.as_bytes() == other.0.as_bytes()
+        }
+    }
+
+    impl Eq for PublicKey {}
+
     impl PublicKey {
         /// Serialize the public key to bytes.
         pub fn to_bytes(&self) -> Vec<u8> {
@@ -202,6 +216,20 @@ pub mod ml_dsa_87 {
     /// must be provided separately during verification.
     #[derive(Clone)]
     pub struct Signature(dilithium5::DetachedSignature);
+
+    impl std::fmt::Debug for Signature {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "Signature({}...)", hex::encode(&self.0.as_bytes()[..8]))
+        }
+    }
+
+    impl PartialEq for Signature {
+        fn eq(&self, other: &Self) -> bool {
+            self.0.as_bytes() == other.0.as_bytes()
+        }
+    }
+
+    impl Eq for Signature {}
 
     impl Signature {
         /// Serialize the signature to bytes.
