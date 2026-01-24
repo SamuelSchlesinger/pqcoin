@@ -60,6 +60,9 @@ pub use blockchain::{
     Address, Block, BlockHeader, Blockchain, BlockchainError, DeserializeError, Deserialize,
     LockingCondition, OutPoint, Serialize, Transaction, TxInput, TxOutput, Utxo, Witness,
     create_genesis_block,
+    // Constants
+    MAX_MULTISIG_KEYS, MAX_TX_INPUTS, MAX_TX_OUTPUTS, MAX_BLOCK_TXS, MAX_SERIALIZE_BYTES,
+    COINBASE_MATURITY, DIFFICULTY_COEFFICIENT_MASK, MAX_FUTURE_BLOCK_TIME,
 };
 
 pub use crypto::{Hash, PublicKey, SecretKey, Signature, hash, hash_many};

@@ -34,6 +34,34 @@ use crate::crypto::{self, Hash, PublicKey, Signature};
 use std::collections::HashMap;
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+/// Maximum number of public keys allowed in a multisig output.
+pub const MAX_MULTISIG_KEYS: u64 = 100;
+
+/// Maximum number of inputs allowed in a single transaction.
+pub const MAX_TX_INPUTS: u64 = 10_000;
+
+/// Maximum number of outputs allowed in a single transaction.
+pub const MAX_TX_OUTPUTS: u64 = 10_000;
+
+/// Maximum number of transactions allowed in a single block.
+pub const MAX_BLOCK_TXS: u64 = 100_000;
+
+/// Maximum size in bytes for variable-length serialized data.
+pub const MAX_SERIALIZE_BYTES: u64 = 1_000_000;
+
+/// Number of blocks before coinbase outputs can be spent.
+pub const COINBASE_MATURITY: u64 = 100;
+
+/// Bitmask for extracting the coefficient from difficulty bits.
+pub const DIFFICULTY_COEFFICIENT_MASK: u32 = 0x00FFFFFF;
+
+/// Maximum allowed time (in seconds) that a block timestamp can be in the future.
+pub const MAX_FUTURE_BLOCK_TIME: u64 = 2 * 60 * 60; // 2 hours
+
+// ============================================================================
 // Serialization Traits
 // ============================================================================
 
@@ -179,8 +207,7 @@ fn read_var_int(data: &[u8]) -> Result<(u64, &[u8]), DeserializeError> {
 
 fn read_bytes(data: &[u8]) -> Result<(Vec<u8>, &[u8]), DeserializeError> {
     let (len, data) = read_var_int(data)?;
-    if len > 1_000_000 {
-        // Sanity limit: 1MB
+    if len > MAX_SERIALIZE_BYTES {
         return Err(DeserializeError::LengthOverflow);
     }
     let len = len as usize;
@@ -429,7 +456,7 @@ impl Deserialize for Witness {
             }
             0x01 => {
                 let (num_keys, data) = read_var_int(data)?;
-                if num_keys > 100 {
+                if num_keys > MAX_MULTISIG_KEYS {
                     return Err(DeserializeError::LengthOverflow);
                 }
                 let mut public_keys = Vec::with_capacity(num_keys as usize);
@@ -442,7 +469,7 @@ impl Deserialize for Witness {
                     data = rest;
                 }
                 let (num_sigs, data) = read_var_int(data)?;
-                if num_sigs > 100 {
+                if num_sigs > MAX_MULTISIG_KEYS {
                     return Err(DeserializeError::LengthOverflow);
                 }
                 let mut signatures = Vec::with_capacity(num_sigs as usize);
@@ -625,7 +652,7 @@ impl Deserialize for LockingCondition {
             0x01 => {
                 let (threshold, data) = read_u8(data)?;
                 let (num_keys, data) = read_var_int(data)?;
-                if num_keys > 100 {
+                if num_keys > MAX_MULTISIG_KEYS {
                     return Err(DeserializeError::LengthOverflow);
                 }
                 if threshold == 0 || (threshold as u64) > num_keys {
@@ -834,7 +861,7 @@ impl Deserialize for Transaction {
     fn deserialize(data: &[u8]) -> Result<(Self, &[u8]), DeserializeError> {
         let (version, data) = read_u32(data)?;
         let (num_inputs, data) = read_var_int(data)?;
-        if num_inputs > 10_000 {
+        if num_inputs > MAX_TX_INPUTS {
             return Err(DeserializeError::LengthOverflow);
         }
         let mut inputs = Vec::with_capacity(num_inputs as usize);
@@ -845,7 +872,7 @@ impl Deserialize for Transaction {
             data = rest;
         }
         let (num_outputs, data) = read_var_int(data)?;
-        if num_outputs > 10_000 {
+        if num_outputs > MAX_TX_OUTPUTS {
             return Err(DeserializeError::LengthOverflow);
         }
         let mut outputs = Vec::with_capacity(num_outputs as usize);
@@ -934,7 +961,7 @@ impl BlockHeader {
     /// requires the block hash to be less than or equal to this target.
     pub fn target(&self) -> [u8; 64] {
         let exponent = (self.difficulty_bits >> 24) as usize;
-        let coefficient = self.difficulty_bits & 0x00FFFFFF;
+        let coefficient = self.difficulty_bits & DIFFICULTY_COEFFICIENT_MASK;
 
         let mut target = [0u8; 64];
 
@@ -1166,7 +1193,7 @@ impl Deserialize for Block {
     fn deserialize(data: &[u8]) -> Result<(Self, &[u8]), DeserializeError> {
         let (header, data) = BlockHeader::deserialize(data)?;
         let (num_txs, data) = read_var_int(data)?;
-        if num_txs > 100_000 {
+        if num_txs > MAX_BLOCK_TXS {
             return Err(DeserializeError::LengthOverflow);
         }
         let mut transactions = Vec::with_capacity(num_txs as usize);
@@ -1428,7 +1455,7 @@ impl Blockchain {
         // actual_time/target_time is clamped to [0.25, 4.0].
         let current_bits = tip.header.difficulty_bits;
         let exponent = current_bits >> 24;
-        let coefficient = (current_bits & 0x00FFFFFF) as u64;
+        let coefficient = (current_bits & DIFFICULTY_COEFFICIENT_MASK) as u64;
 
         // Scale: new_coefficient = coefficient * actual_time / target_time
         // Use 64-bit arithmetic: max value is 0xFFFFFF * 4 = 0x3FFFFFC (26 bits)
@@ -1490,8 +1517,8 @@ impl Blockchain {
                 .get(&input.outpoint)
                 .ok_or(BlockchainError::MissingInput(input.outpoint))?;
 
-            // Coinbase outputs need maturity (100 blocks)
-            if utxo.is_coinbase && height < utxo.height + 100 {
+            // Coinbase outputs need maturity before they can be spent
+            if utxo.is_coinbase && height < utxo.height + COINBASE_MATURITY {
                 return Err(BlockchainError::MissingInput(input.outpoint));
             }
 
@@ -1586,14 +1613,13 @@ impl Blockchain {
             return Err(BlockchainError::InvalidTimestamp);
         }
 
-        // Verify timestamp: must not be more than 2 hours in the future
+        // Verify timestamp: must not be more than MAX_FUTURE_BLOCK_TIME in the future
         // This prevents miners from claiming future timestamps to manipulate difficulty
-        let max_future_time = 2 * 60 * 60; // 2 hours in seconds
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        if block.header.timestamp > current_time + max_future_time {
+        if block.header.timestamp > current_time + MAX_FUTURE_BLOCK_TIME {
             return Err(BlockchainError::InvalidTimestamp);
         }
 
