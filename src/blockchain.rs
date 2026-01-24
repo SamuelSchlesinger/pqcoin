@@ -1575,6 +1575,28 @@ impl Blockchain {
             .ok_or(BlockchainError::UnknownPreviousBlock)?;
         let height = prev_height + 1;
 
+        // Get the previous block for timestamp validation
+        let prev_block = self
+            .blocks
+            .get(&block.header.prev_hash)
+            .ok_or(BlockchainError::UnknownPreviousBlock)?;
+
+        // Verify timestamp: must be strictly greater than previous block
+        if block.header.timestamp <= prev_block.header.timestamp {
+            return Err(BlockchainError::InvalidTimestamp);
+        }
+
+        // Verify timestamp: must not be more than 2 hours in the future
+        // This prevents miners from claiming future timestamps to manipulate difficulty
+        let max_future_time = 2 * 60 * 60; // 2 hours in seconds
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if block.header.timestamp > current_time + max_future_time {
+            return Err(BlockchainError::InvalidTimestamp);
+        }
+
         // Verify proof of work
         if !block.header.check_pow() {
             return Err(BlockchainError::InvalidProofOfWork);
