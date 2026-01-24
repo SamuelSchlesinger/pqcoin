@@ -329,16 +329,14 @@ impl Peer {
             return Err(PeerError::MessageTooLarge(length));
         }
 
-        // Read payload
-        let mut payload = vec![0u8; length];
-        if length > 0 {
-            self.stream.read_exact(&mut payload).await?;
-        }
+        // Allocate once for both header and payload to avoid double allocation
+        let mut full_message = vec![0u8; HEADER_SIZE + length];
+        full_message[..HEADER_SIZE].copy_from_slice(&header);
 
-        // Combine header and payload for deserialization
-        let mut full_message = Vec::with_capacity(HEADER_SIZE + length);
-        full_message.extend_from_slice(&header);
-        full_message.extend_from_slice(&payload);
+        // Read payload directly into the combined buffer
+        if length > 0 {
+            self.stream.read_exact(&mut full_message[HEADER_SIZE..]).await?;
+        }
 
         let msg = Message::deserialize_with_header(&full_message)?;
 

@@ -1,6 +1,26 @@
 //! Transaction mempool.
 //!
 //! Holds unconfirmed transactions waiting to be included in blocks.
+//!
+//! # Transaction Dependencies
+//!
+//! The mempool does **not** support spending outputs created by other unconfirmed
+//! transactions (often called "CPFP" or "chained transactions" in Bitcoin terminology).
+//!
+//! All inputs must reference outputs already confirmed in the blockchain. This is
+//! a deliberate simplification to reduce mempool complexity and validation overhead.
+//!
+//! ## Implications
+//!
+//! - Wallets must wait for confirmation before spending transaction outputs
+//! - Fee-bumping via CPFP is not supported
+//! - Batch operations must be sequential (not parallel dependency chains)
+//!
+//! ## Rationale
+//!
+//! pqcoin prioritizes simplicity and correctness over Bitcoin feature-parity.
+//! Most real-world usage patterns (users sending transactions sequentially) are
+//! unaffected by this limitation.
 
 use crate::blockchain::{Blockchain, OutPoint, Serialize, Transaction, TxOutput};
 use crate::crypto::Hash;
@@ -337,7 +357,7 @@ mod tests {
     use super::*;
     use crate::blockchain::{
         create_genesis_block, Address, Block, BlockHeader, LockingCondition, OutPoint,
-        TxInput, TxOutput, Witness,
+        Transaction, TxInput, TxOutput, Witness,
     };
     use crate::crypto::{hash, ml_dsa_87};
 
@@ -618,5 +638,53 @@ mod tests {
         let txids = mempool.txids();
         assert_eq!(txids.len(), 1);
         assert!(txids.contains(&txid));
+    }
+
+    #[test]
+    fn test_chained_transactions_not_supported() {
+        // This test documents that chained unconfirmed transactions are NOT supported.
+        // A transaction cannot spend an output created by another mempool transaction.
+        // This is a deliberate simplification - see module documentation.
+
+        let (chain, pk, sk, address) = test_blockchain();
+        let mut mempool = Mempool::new();
+
+        // Create first transaction (TX1) that creates an output
+        let tx1 = create_spending_tx(&chain, &pk, &sk, address);
+        let tx1_txid = tx1.txid();
+        let tx1_output_amount = tx1.outputs[0].amount;
+
+        // Add TX1 to mempool
+        assert!(mempool.add(tx1, &chain).unwrap());
+        assert_eq!(mempool.len(), 1);
+
+        // Try to create TX2 that spends TX1's output (which is only in mempool, not blockchain)
+        let tx2_outpoint = OutPoint::new(tx1_txid, 0);
+        let mut tx2 = Transaction::new(
+            vec![TxInput::new(
+                tx2_outpoint,
+                Witness::P2PKH {
+                    public_key: pk.clone(),
+                    signature: ml_dsa_87::sign(&sk, &[0u8; 64]), // placeholder
+                },
+            )],
+            vec![TxOutput::p2pkh(tx1_output_amount - 1000, address)],
+        );
+
+        // Sign TX2
+        let signing_data = tx2.signing_data(0);
+        let message_hash = hash(&signing_data);
+        let signature = ml_dsa_87::sign(&sk, message_hash.as_bytes());
+        tx2.inputs[0].witness = Witness::P2PKH {
+            public_key: pk.clone(),
+            signature,
+        };
+
+        // TX2 should be rejected because TX1's output is not in the blockchain UTXO set
+        let result = mempool.add(tx2, &chain);
+        assert!(
+            matches!(result, Err(MempoolError::MissingInput(op)) if op == tx2_outpoint),
+            "Chained transactions should be rejected with MissingInput error"
+        );
     }
 }

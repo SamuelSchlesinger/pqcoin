@@ -1325,6 +1325,8 @@ pub struct Blockchain {
     tip_height: u64,
     /// The unspent transaction output set.
     utxos: HashMap<OutPoint, Utxo>,
+    /// Transaction ID to block hash index for fast lookups during reorgs.
+    tx_index: HashMap<Hash, Hash>,
     /// The genesis block hash.
     genesis_hash: Hash,
     /// Difficulty adjustment interval (blocks).
@@ -1359,10 +1361,12 @@ impl Blockchain {
         let mut blocks = HashMap::new();
         let mut heights = HashMap::new();
         let mut utxos = HashMap::new();
+        let mut tx_index = HashMap::new();
 
-        // Add genesis block UTXOs
+        // Add genesis block UTXOs and index transactions
         for (i, tx) in genesis.transactions.iter().enumerate() {
             let txid = tx.txid();
+            tx_index.insert(txid, genesis_hash);
             for (j, output) in tx.outputs.iter().enumerate() {
                 let outpoint = OutPoint::new(txid, j as u32);
                 utxos.insert(
@@ -1385,6 +1389,7 @@ impl Blockchain {
             tip: genesis_hash,
             tip_height: 0,
             utxos,
+            tx_index,
             genesis_hash,
             difficulty_adjustment_interval,
             target_block_time,
@@ -1985,8 +1990,10 @@ impl Blockchain {
         }
     }
 
-    /// Apply a block's effects to the UTXO set (add outputs, remove inputs).
+    /// Apply a block's effects to the UTXO set and tx index (add outputs, remove inputs).
     fn apply_block(&mut self, block: &Block, height: u64) {
+        let block_hash = block.hash();
+
         // Remove spent outputs
         for tx in block.transactions.iter().skip(1) {
             for input in &tx.inputs {
@@ -1994,9 +2001,10 @@ impl Blockchain {
             }
         }
 
-        // Add new outputs
+        // Add new outputs and index transactions
         for (i, tx) in block.transactions.iter().enumerate() {
             let txid = tx.txid();
+            self.tx_index.insert(txid, block_hash);
             for (j, output) in tx.outputs.iter().enumerate() {
                 let outpoint = OutPoint::new(txid, j as u32);
                 self.utxos.insert(
@@ -2011,11 +2019,12 @@ impl Blockchain {
         }
     }
 
-    /// Unapply a block's effects from the UTXO set (remove outputs, restore inputs).
-    fn unapply_block(&mut self, block: &Block, height: u64) {
-        // Remove outputs added by this block
+    /// Unapply a block's effects from the UTXO set and tx index (remove outputs, restore inputs).
+    fn unapply_block(&mut self, block: &Block, _height: u64) {
+        // Remove outputs and tx index entries for this block
         for tx in block.transactions.iter() {
             let txid = tx.txid();
+            self.tx_index.remove(&txid);
             for j in 0..tx.outputs.len() {
                 let outpoint = OutPoint::new(txid, j as u32);
                 self.utxos.remove(&outpoint);
@@ -2025,7 +2034,7 @@ impl Blockchain {
         // Restore spent inputs (we need to look them up from their source transactions)
         for tx in block.transactions.iter().skip(1) {
             for input in &tx.inputs {
-                // Find the transaction that created this output
+                // Find the transaction that created this output using the tx index
                 if let Some(source_block) = self.find_block_containing_tx(&input.outpoint.txid) {
                     let source_height = *self.heights.get(&source_block.hash()).unwrap_or(&0);
                     if let Some(source_tx) = source_block.transactions.iter()
@@ -2051,13 +2060,10 @@ impl Blockchain {
     }
 
     /// Find the block containing a specific transaction.
+    ///
+    /// Uses the tx_index for O(1) lookup instead of scanning all blocks.
     fn find_block_containing_tx(&self, txid: &Hash) -> Option<&Block> {
-        for block in self.blocks.values() {
-            if block.transactions.iter().any(|tx| tx.txid() == *txid) {
-                return Some(block);
-            }
-        }
-        None
+        self.tx_index.get(txid).and_then(|block_hash| self.blocks.get(block_hash))
     }
 
     /// Find the common ancestor of two block hashes.

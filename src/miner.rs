@@ -43,8 +43,8 @@ pub fn mine_block(
     // Get block reward
     let reward = blockchain.block_reward(height);
 
-    // Get transactions from mempool
-    let mut txs = mempool.get_block_txs(MAX_BLOCK_TXS);
+    // Get transactions from mempool, sorted by fee rate (highest first)
+    let mut txs = mempool.get_block_txs_with_fees(MAX_BLOCK_TXS, blockchain);
 
     // Calculate fees
     let fees: u64 = txs.iter().map(|tx| calculate_fee(tx, blockchain)).sum();

@@ -77,6 +77,11 @@ pub const MAX_INV_COUNT: usize = 50000;
 /// Maximum number of block locator hashes.
 pub const MAX_LOCATOR_COUNT: usize = 101;
 
+/// Maximum length for variable-length strings in messages (1 MB).
+/// This provides explicit bounds for defense in depth, though strings
+/// are also bounded by the overall message size limit.
+pub const MAX_STRING_SIZE: usize = 1 * 1024 * 1024;
+
 /// Errors that can occur during message handling.
 #[derive(Debug, Error)]
 pub enum MessageError {
@@ -693,6 +698,10 @@ fn write_var_string(buf: &mut Vec<u8>, s: &str) {
 /// Read a variable-length string.
 fn read_var_string(data: &[u8]) -> Result<(String, &[u8]), DeserializeError> {
     let (len, rest) = read_var_int(data)?;
+    // Explicit size limit for defense in depth
+    if len > MAX_STRING_SIZE as u64 {
+        return Err(DeserializeError::LengthOverflow);
+    }
     if rest.len() < len as usize {
         return Err(DeserializeError::UnexpectedEof);
     }
