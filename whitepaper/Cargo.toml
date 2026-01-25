@@ -1,7 +1,0 @@
-[package]
-name = "pqcoin-whitepaper"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-genpdf = "0.2"
