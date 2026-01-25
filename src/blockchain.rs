@@ -1000,16 +1000,19 @@ pub struct BlockHeader {
     pub timestamp: u64,
     /// Compact representation of the difficulty target.
     pub difficulty_bits: u32,
-    /// Nonce used to achieve the required proof-of-work.
-    pub nonce: u64,
+    /// Nonce used to achieve the required proof-of-work (32 bytes).
+    ///
+    /// A 32-byte nonce provides 2^256 possible values, making nonce exhaustion
+    /// impossible and eliminating the need for extraNonce mechanisms.
+    pub nonce: [u8; 32],
 }
 
 impl BlockHeader {
     /// The current block version.
     pub const CURRENT_VERSION: u32 = 1;
 
-    /// Header size in bytes.
-    pub const SIZE: usize = 152;
+    /// Header size in bytes (4 + 64 + 64 + 8 + 4 + 32 = 176).
+    pub const SIZE: usize = 176;
 
     /// Compute the hash of this block header.
     pub fn hash(&self) -> Hash {
@@ -1141,7 +1144,7 @@ impl Serialize for BlockHeader {
         buf.extend_from_slice(self.merkle_root.as_bytes());
         write_u64(buf, self.timestamp);
         write_u32(buf, self.difficulty_bits);
-        write_u64(buf, self.nonce);
+        buf.extend_from_slice(&self.nonce);
     }
 }
 
@@ -1152,7 +1155,7 @@ impl Deserialize for BlockHeader {
         let (merkle_root, data) = read_fixed_bytes::<64>(data)?;
         let (timestamp, data) = read_u64(data)?;
         let (difficulty_bits, data) = read_u32(data)?;
-        let (nonce, data) = read_u64(data)?;
+        let (nonce, data) = read_fixed_bytes::<32>(data)?;
         Ok((
             BlockHeader {
                 version,
@@ -2450,7 +2453,7 @@ pub fn create_genesis_block(
         merkle_root,
         timestamp,
         difficulty_bits,
-        nonce: 0,
+        nonce: [0u8; 32],
     };
 
     Block::new(header, vec![coinbase])
@@ -2659,7 +2662,7 @@ mod tests {
             merkle_root: crypto::hash(b"merkle"),
             timestamp: 1234567890,
             difficulty_bits: 0x1d00ffff,
-            nonce: 42,
+            nonce: [42u8; 32],
         };
 
         let bytes = header.to_bytes();
@@ -2682,7 +2685,7 @@ mod tests {
             merkle_root,
             timestamp: 1234567890,
             difficulty_bits: 0x1d00ffff,
-            nonce: 0,
+            nonce: [0u8; 32],
         };
 
         let block = Block::new(header, vec![tx]);
@@ -2751,7 +2754,7 @@ mod tests {
             merkle_root: Hash::from_bytes([0u8; 64]),
             timestamp: 0,
             difficulty_bits: bits,
-            nonce: 0,
+            nonce: [0u8; 32],
         };
 
         let target = header.target();
@@ -2772,7 +2775,7 @@ mod tests {
             merkle_root: Hash::from_bytes([0u8; 64]),
             timestamp: 0,
             difficulty_bits: easy_bits,
-            nonce: 0,
+            nonce: [0u8; 32],
         };
 
         // Should pass with any nonce since target is so high
@@ -2968,7 +2971,7 @@ mod tests {
                 merkle_root,
                 timestamp,
                 difficulty_bits: prev_block.header.difficulty_bits,
-                nonce: 0,
+                nonce: [0u8; 32],
             };
 
             let block = Block::new(header, vec![coinbase]);
@@ -3050,7 +3053,7 @@ mod tests {
             merkle_root,
             timestamp,
             difficulty_bits: prev_block.header.difficulty_bits,
-            nonce: 0,
+            nonce: [0u8; 32],
         };
 
         Block::new(header, all_txs)
@@ -3159,7 +3162,7 @@ mod tests {
             merkle_root,
             timestamp,
             difficulty_bits: 0x40ffffff,
-            nonce: 0,
+            nonce: [0u8; 32],
         };
         let genesis = Block::new(genesis_header, vec![coinbase.clone()]);
 
@@ -3181,7 +3184,7 @@ mod tests {
                 merkle_root: block_merkle_root,
                 timestamp,
                 difficulty_bits: prev_block.header.difficulty_bits,
-                nonce: 0,
+                nonce: [0u8; 32],
             };
 
             let block = Block::new(header, vec![miner_coinbase]);

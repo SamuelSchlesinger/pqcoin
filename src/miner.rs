@@ -9,6 +9,12 @@
 //! maximizes miner revenue by including the highest-paying transactions first.
 //!
 //! See [`Mempool::get_block_txs_with_fees()`] for the sorting implementation.
+//!
+//! # Nonce Design
+//!
+//! pqcoin uses a 32-byte (256-bit) nonce, providing 2^256 possible values.
+//! This eliminates the need for Bitcoin-style extraNonce mechanisms, as the
+//! nonce space is effectively infinite for practical mining purposes.
 
 use crate::blockchain::{Address, Block, BlockHeader, Blockchain, Transaction};
 use crate::constants::MAX_BLOCK_TXS;
@@ -26,22 +32,27 @@ pub enum MineResult {
     NoWork,
 }
 
+/// Increment a 32-byte nonce (little-endian).
+///
+/// This treats the 32-byte array as a 256-bit little-endian integer
+/// and increments it by 1. Returns true if the increment succeeded,
+/// false if it would overflow (which is practically impossible).
+#[inline]
+fn increment_nonce(nonce: &mut [u8; 32]) -> bool {
+    for byte in nonce.iter_mut() {
+        let (new_val, overflow) = byte.overflowing_add(1);
+        *byte = new_val;
+        if !overflow {
+            return true;
+        }
+    }
+    false // All bytes overflowed (2^256 iterations - practically impossible)
+}
+
 /// Mine a single block.
 ///
 /// This is a simple CPU miner that increments the nonce until finding a valid PoW.
 /// Returns when a block is found or `stop` is set to true.
-///
-/// # Nonce Exhaustion Handling
-///
-/// The mining process uses an extraNonce mechanism to handle the case where the
-/// primary u64 nonce space is exhausted (extremely unlikely but theoretically possible
-/// with ASICs or long mining sessions). When the nonce wraps around:
-/// 1. Increment the extraNonce counter
-/// 2. Regenerate the coinbase transaction with the new extraNonce
-/// 3. Recompute the merkle root
-/// 4. Continue mining with the new block template
-///
-/// This matches Bitcoin's approach where the coinbase scriptSig contains an extraNonce.
 pub fn mine_block(
     blockchain: &Blockchain,
     mempool: &Mempool,
@@ -64,86 +75,57 @@ pub fn mine_block(
     let reward = blockchain.block_reward(height);
 
     // Get transactions from mempool, sorted by fee rate (highest first)
-    let mempool_txs = mempool.get_block_txs_with_fees(MAX_BLOCK_TXS, blockchain);
+    let mut txs = mempool.get_block_txs_with_fees(MAX_BLOCK_TXS, blockchain);
 
     // Calculate fees
-    let fees: u64 = mempool_txs.iter().map(|tx| calculate_fee(tx, blockchain)).sum();
+    let fees: u64 = txs.iter().map(|tx| calculate_fee(tx, blockchain)).sum();
+
+    // Create coinbase transaction
+    let coinbase = Transaction::coinbase(height, reward + fees, miner_address);
+    txs.insert(0, coinbase);
 
     // Get difficulty
     let difficulty_bits = blockchain.next_difficulty();
 
-    // ExtraNonce for handling nonce exhaustion
-    let mut extra_nonce: u64 = 0;
+    // Compute merkle root
+    let merkle_root = Block::compute_merkle_root(&txs);
 
+    // Create header template
+    let mut header = BlockHeader {
+        version: BlockHeader::CURRENT_VERSION,
+        prev_hash,
+        merkle_root,
+        timestamp,
+        difficulty_bits,
+        nonce: [0u8; 32],
+    };
+
+    // Counter for periodic timestamp updates
+    let mut hash_count: u64 = 0;
+
+    // Mine!
     loop {
-        // Create coinbase transaction with extraNonce
-        let coinbase = create_coinbase_with_extra_nonce(height, reward + fees, miner_address, extra_nonce);
-        let mut txs = vec![coinbase];
-        txs.extend(mempool_txs.clone());
-
-        // Compute merkle root
-        let merkle_root = Block::compute_merkle_root(&txs);
-
-        // Create header template
-        let mut header = BlockHeader {
-            version: BlockHeader::CURRENT_VERSION,
-            prev_hash,
-            merkle_root,
-            timestamp,
-            difficulty_bits,
-            nonce: 0,
-        };
-
-        // Mine with current extraNonce
-        loop {
-            if stop.load(Ordering::Relaxed) {
-                return MineResult::Stopped;
-            }
-
-            if header.check_pow() {
-                let block = Block::new(header, txs);
-                return MineResult::Success(block);
-            }
-
-            // Check for nonce exhaustion (wrapped around)
-            if header.nonce == u64::MAX {
-                // Increment extraNonce and regenerate block template
-                extra_nonce = extra_nonce.wrapping_add(1);
-                break;
-            }
-
-            header.nonce = header.nonce.wrapping_add(1);
-
-            // Every 100k hashes, update timestamp (ensuring it stays > prev_timestamp)
-            if header.nonce % 100_000 == 0 {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
-                header.timestamp = std::cmp::max(now, prev_timestamp + 1);
-            }
+        if stop.load(Ordering::Relaxed) {
+            return MineResult::Stopped;
         }
-    }
-}
 
-/// Create a coinbase transaction with an extraNonce value.
-///
-/// The extraNonce is included in the coinbase data alongside the block height,
-/// providing additional entropy when the primary nonce space is exhausted.
-fn create_coinbase_with_extra_nonce(height: u64, reward: u64, recipient: Address, extra_nonce: u64) -> Transaction {
-    use crate::blockchain::{TxInput, TxOutput, Witness};
+        if header.check_pow() {
+            let block = Block::new(header, txs);
+            return MineResult::Success(block);
+        }
 
-    // Coinbase data includes height (8 bytes) and extraNonce (8 bytes)
-    let mut coinbase_data = height.to_le_bytes().to_vec();
-    coinbase_data.extend_from_slice(&extra_nonce.to_le_bytes());
+        // Increment the 32-byte nonce
+        increment_nonce(&mut header.nonce);
+        hash_count += 1;
 
-    Transaction {
-        version: Transaction::CURRENT_VERSION,
-        inputs: vec![TxInput {
-            outpoint: crate::blockchain::OutPoint::null(),
-            witness: Witness::Coinbase(coinbase_data),
-        }],
-        outputs: vec![TxOutput::p2pkh(reward, recipient)],
+        // Every 100k hashes, update timestamp (ensuring it stays > prev_timestamp)
+        if hash_count % 100_000 == 0 {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            header.timestamp = std::cmp::max(now, prev_timestamp + 1);
+        }
     }
 }
 
