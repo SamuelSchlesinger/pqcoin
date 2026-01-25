@@ -117,6 +117,13 @@ pub const TARGET_BLOCK_TIME: u64 = 600;
 /// Halving interval (blocks).
 pub const HALVING_INTERVAL: u64 = 210_000;
 
+/// Minimum difficulty bits (maximum target).
+/// This prevents difficulty from dropping below a safe floor, even during
+/// periods of very low hashrate. Format: (exponent << 24) | coefficient.
+/// 0x41ffffff = exponent 65 (max for 512-bit), coefficient 0xffffff
+/// This effectively allows any valid PoW but protects against edge cases.
+pub const MIN_DIFFICULTY_BITS: u32 = 0x41ffffff;
+
 // ============================================================================
 // Mempool Constants
 // ============================================================================
