@@ -46,13 +46,42 @@
 //! - Entries are removed when blocks are unapplied via `unapply_block()`
 
 use crate::constants::{
-    COINBASE_MATURITY, DIFFICULTY_COEFFICIENT_MASK, MAX_BLOCK_SIZE, MAX_BLOCK_TXS,
+    COINBASE_MATURITY, DIFFICULTY_COEFFICIENT_MASK, DUST_LIMIT, MAX_BLOCK_SIZE, MAX_BLOCK_TXS,
     MAX_FUTURE_BLOCK_TIME, MAX_MULTISIG_KEYS, MAX_REORG_DEPTH, MAX_SERIALIZE_BYTES,
     MAX_TX_INPUTS, MAX_TX_OUTPUTS,
 };
 use crate::crypto::{self, Hash, PublicKey, Signature};
 use rayon::prelude::*;
 use std::collections::HashMap;
+
+// ============================================================================
+// Checkpoint and AssumeValid Configuration
+// ============================================================================
+
+/// Hardcoded checkpoints for known-good blocks.
+/// Format: (height, block_hash_hex)
+/// These prevent long-range attacks during initial sync.
+const CHECKPOINTS: &[(u64, &str)] = &[
+    // Genesis block - add real hash after launch
+    // (0, "genesis_hash_here"),
+];
+
+/// Block hash for which we assume all ancestors have valid signatures.
+/// Set to None to verify all signatures (slower but more secure).
+/// This should be a block that is buried under significant PoW.
+const ASSUME_VALID: Option<&str> = None;
+
+/// Parse a hex string into a Hash.
+/// Returns None if the hex string is invalid or wrong length.
+fn parse_hash_hex(hex_str: &str) -> Option<Hash> {
+    let bytes = hex::decode(hex_str).ok()?;
+    if bytes.len() != 64 {
+        return None;
+    }
+    let mut arr = [0u8; 64];
+    arr.copy_from_slice(&bytes);
+    Some(Hash::from_bytes(arr))
+}
 
 // ============================================================================
 // Serialization Traits
@@ -1272,6 +1301,10 @@ pub enum BlockchainError {
     TooManyInputs(usize),
     /// Transaction has too many outputs.
     TooManyOutputs(usize),
+    /// Transaction output is below the dust limit.
+    DustOutput { index: usize, amount: u64, limit: u64 },
+    /// Block hash doesn't match the checkpoint at this height.
+    CheckpointMismatch { height: u64, expected: Hash, got: Hash },
 }
 
 impl std::fmt::Display for BlockchainError {
@@ -1297,6 +1330,13 @@ impl std::fmt::Display for BlockchainError {
             BlockchainError::ReorgTooDeep(depth) => write!(f, "reorg too deep: {} blocks", depth),
             BlockchainError::TooManyInputs(count) => write!(f, "too many inputs: {}", count),
             BlockchainError::TooManyOutputs(count) => write!(f, "too many outputs: {}", count),
+            BlockchainError::DustOutput { index, amount, limit } => {
+                write!(f, "output {} is dust: {} below limit {}", index, amount, limit)
+            }
+            BlockchainError::CheckpointMismatch { height, expected, got } => {
+                write!(f, "checkpoint mismatch at height {}: expected {}, got {}",
+                    height, expected, got)
+            }
         }
     }
 }
@@ -1352,6 +1392,12 @@ pub struct Blockchain {
     initial_reward: u64,
     /// Reward halving interval (blocks).
     halving_interval: u64,
+}
+
+/// Check if an output amount is below the dust limit.
+/// Dust outputs are uneconomical to spend and bloat the UTXO set.
+fn is_dust(amount: u64) -> bool {
+    amount < DUST_LIMIT
 }
 
 impl Blockchain {
@@ -1938,6 +1984,19 @@ impl Blockchain {
             }
             if tx.outputs.len() > MAX_TX_OUTPUTS {
                 return Err(BlockchainError::TooManyOutputs(tx.outputs.len()));
+            }
+        }
+
+        // Check for dust outputs (skip coinbase transaction)
+        for tx in block.transactions.iter().skip(1) {
+            for (index, output) in tx.outputs.iter().enumerate() {
+                if is_dust(output.amount) {
+                    return Err(BlockchainError::DustOutput {
+                        index,
+                        amount: output.amount,
+                        limit: DUST_LIMIT,
+                    });
+                }
             }
         }
 
@@ -3122,5 +3181,43 @@ mod tests {
         let block = create_block_with_txs(&chain, vec![tx], recipient_address);
         let result = chain.add_block(block);
         assert!(matches!(result, Err(BlockchainError::InsufficientInputs)));
+    }
+
+    #[test]
+    fn test_dust_output_rejected() {
+        let (mut chain, pk, sk, address) = test_blockchain();
+        let (recipient_pk, _) = test_keypair();
+        let recipient_address = Address::from_public_key(&recipient_pk);
+
+        // Create a transaction with an output below DUST_LIMIT
+        let (outpoint, utxo) = find_mature_utxo(&chain, &address);
+
+        let inputs = vec![TxInput::new(
+            outpoint,
+            Witness::P2PKH {
+                public_key: pk.clone(),
+                signature: crypto::ml_dsa_87::sign(&sk, b"placeholder"),
+            },
+        )];
+        // Create a dust output (below DUST_LIMIT of 5000)
+        let dust_amount = DUST_LIMIT - 1;
+        let change_amount = utxo.output.amount - dust_amount - 1000; // Leave some for fee
+        let outputs = vec![
+            TxOutput::p2pkh(dust_amount, recipient_address),
+            TxOutput::p2pkh(change_amount, address),
+        ];
+        let mut tx = Transaction::new(inputs, outputs);
+
+        let signing_data = tx.signing_data(0);
+        let message = crypto::hash(&signing_data);
+        let signature = crypto::ml_dsa_87::sign(&sk, message.as_bytes());
+        tx.inputs[0].witness = Witness::P2PKH {
+            public_key: pk.clone(),
+            signature,
+        };
+
+        let block = create_block_with_txs(&chain, vec![tx], recipient_address);
+        let result = chain.add_block(block);
+        assert!(matches!(result, Err(BlockchainError::DustOutput { index: 0, amount, limit }) if amount == dust_amount && limit == DUST_LIMIT));
     }
 }

@@ -17,13 +17,16 @@ pub const MAX_TX_INPUTS: usize = 10_000;
 pub const MAX_TX_OUTPUTS: usize = 10_000;
 
 /// Maximum number of public keys allowed in a multisig output.
-pub const MAX_MULTISIG_KEYS: usize = 100;
+/// Limited to 15 to prevent massive witness sizes with post-quantum signatures,
+/// which are significantly larger than classical ECDSA signatures.
+pub const MAX_MULTISIG_KEYS: usize = 15;
 
 /// Maximum size in bytes for variable-length serialized data.
 pub const MAX_SERIALIZE_BYTES: usize = 1_000_000;
 
-/// Maximum serialized block size in bytes (8 MB).
-pub const MAX_BLOCK_SIZE: usize = 8 * 1024 * 1024;
+/// Maximum serialized block size in bytes (16 MB).
+/// Increased from 8 MB to accommodate larger post-quantum signatures.
+pub const MAX_BLOCK_SIZE: usize = 16 * 1024 * 1024;
 
 /// Number of blocks before coinbase outputs can be spent.
 pub const COINBASE_MATURITY: u64 = 100;
@@ -72,6 +75,10 @@ pub const MAX_HEADERS_COUNT: usize = 2000;
 /// Maximum connections per IP address.
 pub const MAX_CONNECTIONS_PER_IP: usize = 3;
 
+/// Maximum connections allowed per /16 subnet.
+/// Limits Sybil attack effectiveness by preventing address space concentration.
+pub const MAX_PER_SUBNET: usize = 2;
+
 /// Minimum time between connection attempts from the same IP (seconds).
 pub const CONNECTION_RATE_LIMIT_SECS: u64 = 1;
 
@@ -80,6 +87,14 @@ pub const BAN_DURATION_SECS: u64 = 24 * 60 * 60; // 24 hours
 
 /// Ban score threshold - peer is banned when this score is reached.
 pub const BAN_SCORE_THRESHOLD: u32 = 100;
+
+/// Address relay rate limit (addresses per second).
+/// Prevents address flooding attacks that could pollute peer address tables.
+pub const ADDR_RELAY_RATE: f64 = 0.1;
+
+/// Maximum burst size for address relay.
+/// Allows initial burst of address messages while maintaining long-term rate limit.
+pub const ADDR_RELAY_BURST: usize = 1000;
 
 // ============================================================================
 // Mining Constants
@@ -101,6 +116,22 @@ pub const TARGET_BLOCK_TIME: u64 = 600;
 
 /// Halving interval (blocks).
 pub const HALVING_INTERVAL: u64 = 210_000;
+
+// ============================================================================
+// Mempool Constants
+// ============================================================================
+
+/// Minimum transaction fee in quanta required for relay.
+/// Prevents spam transactions and ensures miners have economic incentive to include transactions.
+pub const MIN_RELAY_FEE: u64 = 1000;
+
+/// Minimum output amount in quanta.
+/// Outputs below this threshold are considered "dust" and rejected to prevent UTXO bloat.
+pub const DUST_LIMIT: u64 = 5000;
+
+/// Number of blocks after which an unconfirmed transaction expires (~72 hours at 10 min blocks).
+/// Prevents indefinite transaction hanging and allows fee bumping after expiry.
+pub const TX_EXPIRY_BLOCKS: u64 = 432;
 
 // ============================================================================
 // Testing Constants (for faster iteration)
