@@ -24,10 +24,7 @@ pub enum StorageError {
     /// Storage is not initialized (no genesis block).
     NotInitialized,
     /// Genesis block mismatch (different chain).
-    GenesisMismatch {
-        expected: String,
-        found: String,
-    },
+    GenesisMismatch { expected: String, found: String },
 }
 
 impl std::fmt::Display for StorageError {

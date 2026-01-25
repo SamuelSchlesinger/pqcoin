@@ -91,26 +91,45 @@ pub mod wallet;
 
 // Re-export commonly used types for convenience
 pub use blockchain::{
-    Address, Block, BlockHeader, Blockchain, BlockchainError, DeserializeError, Deserialize,
+    Address, Block, BlockHeader, Blockchain, BlockchainError, Deserialize, DeserializeError,
     LockingCondition, OutPoint, Serialize, Transaction, TxInput, TxOutput, Utxo, Witness,
     create_genesis_block,
 };
 
 // Re-export constants
 pub use constants::{
-    // Protocol constants
-    MAX_BLOCK_TXS, MAX_TX_INPUTS, MAX_TX_OUTPUTS, MAX_MULTISIG_KEYS, MAX_SERIALIZE_BYTES,
-    MAX_BLOCK_SIZE, COINBASE_MATURITY, DIFFICULTY_COEFFICIENT_MASK, MAX_FUTURE_BLOCK_TIME,
-    // Network constants
-    DEFAULT_PORT, MAX_PEERS, MAX_OUTBOUND, MAX_ORPHAN_BLOCKS, MAX_BLOCKS_IN_FLIGHT,
-    MAX_PENDING_HEADERS, MAX_HEADERS_COUNT, MAX_CONNECTIONS_PER_IP, CONNECTION_RATE_LIMIT_SECS,
-    BAN_DURATION_SECS, BAN_SCORE_THRESHOLD,
+    BAN_DURATION_SECS,
+    BAN_SCORE_THRESHOLD,
+    COINBASE_MATURITY,
+    CONNECTION_RATE_LIMIT_SECS,
     // Mining constants
-    DEFAULT_DIFFICULTY, INITIAL_REWARD, DIFFICULTY_INTERVAL, TARGET_BLOCK_TIME, HALVING_INTERVAL,
+    DEFAULT_DIFFICULTY,
+    // Network constants
+    DEFAULT_PORT,
+    DIFFICULTY_COEFFICIENT_MASK,
+    DIFFICULTY_INTERVAL,
+    HALVING_INTERVAL,
+    INITIAL_REWARD,
+    MAX_BLOCK_SIZE,
+    // Protocol constants
+    MAX_BLOCK_TXS,
+    MAX_BLOCKS_IN_FLIGHT,
+    MAX_CONNECTIONS_PER_IP,
+    MAX_FUTURE_BLOCK_TIME,
+    MAX_HEADERS_COUNT,
+    MAX_MULTISIG_KEYS,
+    MAX_ORPHAN_BLOCKS,
+    MAX_OUTBOUND,
+    MAX_PEERS,
+    MAX_PENDING_HEADERS,
+    MAX_SERIALIZE_BYTES,
+    MAX_TX_INPUTS,
+    MAX_TX_OUTPUTS,
+    TARGET_BLOCK_TIME,
 };
 
 pub use crypto::{Hash, PublicKey, SecretKey, Signature, hash, hash_many};
 
 pub use mempool::{Mempool, MempoolError};
-pub use miner::{mine_block, BackgroundMiner, MineResult};
+pub use miner::{BackgroundMiner, MineResult, mine_block};
 pub use storage::{LmdbStorage, StorageError, StorageRead, StorageWrite};

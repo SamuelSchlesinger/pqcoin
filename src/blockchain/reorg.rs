@@ -67,7 +67,9 @@ pub(crate) fn unapply_block(
     for tx in block.transactions.iter().skip(1) {
         for input in &tx.inputs {
             // Find the transaction that created this output using the tx index
-            if let Some(source_block) = find_block_containing_tx(&input.outpoint.txid, tx_index, blocks) {
+            if let Some(source_block) =
+                find_block_containing_tx(&input.outpoint.txid, tx_index, blocks)
+            {
                 let source_height = *heights.get(&source_block.hash()).unwrap_or(&0);
                 if let Some(source_tx) = source_block
                     .transactions
@@ -103,7 +105,9 @@ pub(crate) fn find_block_containing_tx<'a>(
     tx_index: &HashMap<Hash, Hash>,
     blocks: &'a HashMap<Hash, Block>,
 ) -> Option<&'a Block> {
-    tx_index.get(txid).and_then(|block_hash| blocks.get(block_hash))
+    tx_index
+        .get(txid)
+        .and_then(|block_hash| blocks.get(block_hash))
 }
 
 /// Find the common ancestor of two block hashes.
@@ -141,11 +145,7 @@ pub(crate) fn find_common_ancestor(
 }
 
 /// Get the chain of blocks from a hash back to (but not including) an ancestor.
-pub(crate) fn get_chain_segment(
-    from: Hash,
-    to: Hash,
-    blocks: &HashMap<Hash, Block>,
-) -> Vec<Hash> {
+pub(crate) fn get_chain_segment(from: Hash, to: Hash, blocks: &HashMap<Hash, Block>) -> Vec<Hash> {
     let mut chain = Vec::new();
     let mut current = from;
 
@@ -280,7 +280,9 @@ pub(crate) fn unapply_block_to_storage<T: StorageWriteTxn>(
     for tx in block.transactions.iter().skip(1) {
         for input in &tx.inputs {
             // Find the transaction that created this output
-            if let Some(source_block) = find_block_containing_tx(&input.outpoint.txid, tx_index, blocks) {
+            if let Some(source_block) =
+                find_block_containing_tx(&input.outpoint.txid, tx_index, blocks)
+            {
                 let source_height = *heights.get(&source_block.hash()).unwrap_or(&0);
                 if let Some(source_tx) = source_block
                     .transactions

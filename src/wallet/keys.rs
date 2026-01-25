@@ -1,16 +1,16 @@
 //! Key management and encryption for pqcoin wallets.
 
 use aes_gcm::{
-    aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
+    aead::{Aead, KeyInit},
 };
-use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
+use argon2::{Argon2, PasswordHasher, password_hash::SaltString};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
 use crate::blockchain::Address;
-use crate::crypto::{ml_dsa_87, PublicKey, SecretKey};
+use crate::crypto::{PublicKey, SecretKey, ml_dsa_87};
 
 /// Wallet errors.
 #[derive(Debug, Clone)]
@@ -149,7 +149,10 @@ impl EncryptedKey {
         key.zeroize();
 
         Ok(Self {
-            ciphertext: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &ciphertext),
+            ciphertext: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                &ciphertext,
+            ),
             nonce: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &nonce_bytes),
             salt: salt.to_string(),
         })
@@ -224,10 +227,7 @@ mod tests {
         let encrypted = EncryptedKey::encrypt(keypair.secret_key(), password).unwrap();
         let decrypted = encrypted.decrypt(password).unwrap();
 
-        assert_eq!(
-            keypair.secret_key().to_bytes(),
-            decrypted.to_bytes()
-        );
+        assert_eq!(keypair.secret_key().to_bytes(), decrypted.to_bytes());
     }
 
     #[test]

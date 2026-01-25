@@ -172,7 +172,10 @@ mod tests {
     fn test_u64_codec_ordering() {
         // Big-endian encoding should preserve numeric ordering
         let values = [0u64, 1, 100, 1000, u64::MAX];
-        let mut encoded: Vec<_> = values.iter().map(|v| U64Codec::bytes_encode(v).unwrap().to_vec()).collect();
+        let mut encoded: Vec<_> = values
+            .iter()
+            .map(|v| U64Codec::bytes_encode(v).unwrap().to_vec())
+            .collect();
         encoded.sort();
         let decoded: Vec<_> = encoded
             .iter()

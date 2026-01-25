@@ -10,7 +10,7 @@ use crate::network::service::events::NetworkEvent;
 use crate::network::service::state::{NetworkState, PeerCommand, PeerMessage};
 use crate::network::sync::SyncManager;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 
 /// Handles a message from a peer task by dispatching to the appropriate handler.
 pub(crate) async fn handle_peer_message(
@@ -35,11 +35,7 @@ pub(crate) async fn handle_peer_message(
 }
 
 /// Handle a successful handshake completion.
-async fn handle_handshake_complete(
-    peer_id: u64,
-    height: u64,
-    state: &Arc<RwLock<NetworkState>>,
-) {
+async fn handle_handshake_complete(peer_id: u64, height: u64, state: &Arc<RwLock<NetworkState>>) {
     let mut state = state.write().await;
     if let Some(info) = state.peers.get_mut(&peer_id) {
         info.height = height;
@@ -126,19 +122,19 @@ pub(crate) async fn handle_message(
 
 /// Handle a ping message by sending a pong.
 async fn handle_ping(peer_id: u64, nonce: u64, state: &Arc<RwLock<NetworkState>>) {
-    tracing::debug!(peer_id = peer_id, nonce = nonce, "received ping, sending pong");
+    tracing::debug!(
+        peer_id = peer_id,
+        nonce = nonce,
+        "received ping, sending pong"
+    );
     send_to_peer(peer_id, Message::Pong(nonce), state).await;
 }
 
 /// Handle a GetAddr message by sending known addresses.
 async fn handle_get_addr(peer_id: u64, state: &Arc<RwLock<NetworkState>>) {
     let state_guard = state.read().await;
-    let addrs: Vec<std::net::SocketAddr> = state_guard
-        .known_addrs
-        .iter()
-        .take(1000)
-        .cloned()
-        .collect();
+    let addrs: Vec<std::net::SocketAddr> =
+        state_guard.known_addrs.iter().take(1000).cloned().collect();
     drop(state_guard);
     send_to_peer(peer_id, Message::Addr { addrs }, state).await;
 }
@@ -180,7 +176,10 @@ async fn handle_inv(
 ) {
     let mempool_guard = mempool.read().await;
     let mut sync_guard = sync.write().await;
-    if let Some(response) = sync_guard.process_inv(&items, |hash| mempool_guard.contains(hash)).await {
+    if let Some(response) = sync_guard
+        .process_inv(&items, |hash| mempool_guard.contains(hash))
+        .await
+    {
         drop(sync_guard);
         drop(mempool_guard);
         send_to_peer(peer_id, response, state).await;
@@ -197,7 +196,9 @@ async fn handle_get_data(
 ) {
     let mempool_guard = mempool.read().await;
     let sync_guard = sync.read().await;
-    let responses = sync_guard.respond_to_get_data(&items, |hash| mempool_guard.get(hash).cloned()).await;
+    let responses = sync_guard
+        .respond_to_get_data(&items, |hash| mempool_guard.get(hash).cloned())
+        .await;
     drop(sync_guard);
     drop(mempool_guard);
     for response in responses {
@@ -267,9 +268,14 @@ async fn handle_block(
 
             // Events and broadcast without holding locks
             let _ = event_tx.send(NetworkEvent::NewBlock(block.clone())).await;
-            broadcast_except(peer_id, Message::Inv {
-                items: vec![InvItem::block(block_hash)],
-            }, state).await;
+            broadcast_except(
+                peer_id,
+                Message::Inv {
+                    items: vec![InvItem::block(block_hash)],
+                },
+                state,
+            )
+            .await;
         }
         Ok(false) => {
             // Orphan block, already stored
@@ -310,9 +316,14 @@ async fn handle_tx(
                 .await;
 
             // Relay to other peers
-            broadcast_except(peer_id, Message::Inv {
-                items: vec![InvItem::tx(txid)],
-            }, state).await;
+            broadcast_except(
+                peer_id,
+                Message::Inv {
+                    items: vec![InvItem::tx(txid)],
+                },
+                state,
+            )
+            .await;
         }
         Ok(false) => {
             // Already in mempool, ignore
@@ -347,8 +358,12 @@ pub(crate) async fn handle_disconnect(
                 state_guard.outbound_count = state_guard.outbound_count.saturating_sub(1);
             }
             // Update rate limiter and subnet limiter connection counts
-            state_guard.rate_limiter.record_disconnection(info.addr.ip());
-            state_guard.subnet_limiter.record_disconnection(&info.addr.ip());
+            state_guard
+                .rate_limiter
+                .record_disconnection(info.addr.ip());
+            state_guard
+                .subnet_limiter
+                .record_disconnection(&info.addr.ip());
         }
 
         info.map(|i| i.addr)
@@ -373,7 +388,11 @@ pub(crate) async fn handle_disconnect(
 }
 
 /// Send a message to a specific peer.
-pub(crate) async fn send_to_peer(peer_id: u64, message: Message, state: &Arc<RwLock<NetworkState>>) {
+pub(crate) async fn send_to_peer(
+    peer_id: u64,
+    message: Message,
+    state: &Arc<RwLock<NetworkState>>,
+) {
     let state_guard = state.read().await;
     if let Some(sender) = state_guard.peer_senders.get(&peer_id) {
         let _ = sender.send(PeerCommand::Send(message)).await;
@@ -381,7 +400,11 @@ pub(crate) async fn send_to_peer(peer_id: u64, message: Message, state: &Arc<RwL
 }
 
 /// Broadcast a message to all peers except one.
-pub(crate) async fn broadcast_except(except_peer_id: u64, message: Message, state: &Arc<RwLock<NetworkState>>) {
+pub(crate) async fn broadcast_except(
+    except_peer_id: u64,
+    message: Message,
+    state: &Arc<RwLock<NetworkState>>,
+) {
     let state_guard = state.read().await;
     for (&peer_id, sender) in &state_guard.peer_senders {
         if peer_id != except_peer_id {

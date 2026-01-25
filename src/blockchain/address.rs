@@ -1,7 +1,7 @@
 //! Address type representing a destination for funds.
 
-use crate::crypto::{self, Hash, PublicKey};
 use super::serialize::{Deserialize, DeserializeError, Serialize, read_fixed_bytes};
+use crate::crypto::{self, Hash, PublicKey};
 
 /// A pqcoin address, which is the SHA3-512 hash of a public key.
 ///

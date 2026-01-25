@@ -1,11 +1,11 @@
 //! Witness data proving authorization to spend outputs.
 
+use super::serialize::{
+    Deserialize, DeserializeError, Serialize, read_bytes, read_u8, read_var_int, write_bytes,
+    write_u8, write_var_int,
+};
 use crate::constants::MAX_MULTISIG_KEYS;
 use crate::crypto::{PublicKey, Signature};
-use super::serialize::{
-    Deserialize, DeserializeError, Serialize,
-    read_bytes, read_u8, read_var_int, write_bytes, write_u8, write_var_int,
-};
 
 /// Witness data proving authorization to spend an output.
 ///
@@ -88,7 +88,13 @@ impl Deserialize for Witness {
                     .ok_or_else(|| DeserializeError::InvalidData("invalid public key".into()))?;
                 let signature = Signature::from_bytes(&sig_bytes)
                     .ok_or_else(|| DeserializeError::InvalidData("invalid signature".into()))?;
-                Ok((Witness::P2PKH { public_key, signature }, data))
+                Ok((
+                    Witness::P2PKH {
+                        public_key,
+                        signature,
+                    },
+                    data,
+                ))
             }
             0x01 => {
                 let (num_keys, data) = read_var_int(data)?;
@@ -99,8 +105,9 @@ impl Deserialize for Witness {
                 let mut data = data;
                 for _ in 0..num_keys {
                     let (pk_bytes, rest) = read_bytes(data)?;
-                    let pk = PublicKey::from_bytes(&pk_bytes)
-                        .ok_or_else(|| DeserializeError::InvalidData("invalid public key".into()))?;
+                    let pk = PublicKey::from_bytes(&pk_bytes).ok_or_else(|| {
+                        DeserializeError::InvalidData("invalid public key".into())
+                    })?;
                     public_keys.push(pk);
                     data = rest;
                 }
@@ -115,21 +122,31 @@ impl Deserialize for Witness {
                     data = rest;
                     if present == 0x01 {
                         let (sig_bytes, rest) = read_bytes(data)?;
-                        let sig = Signature::from_bytes(&sig_bytes)
-                            .ok_or_else(|| DeserializeError::InvalidData("invalid signature".into()))?;
+                        let sig = Signature::from_bytes(&sig_bytes).ok_or_else(|| {
+                            DeserializeError::InvalidData("invalid signature".into())
+                        })?;
                         signatures.push(Some(sig));
                         data = rest;
                     } else {
                         signatures.push(None);
                     }
                 }
-                Ok((Witness::Multisig { public_keys, signatures }, data))
+                Ok((
+                    Witness::Multisig {
+                        public_keys,
+                        signatures,
+                    },
+                    data,
+                ))
             }
             0x02 => {
                 let (coinbase_data, data) = read_bytes(data)?;
                 Ok((Witness::Coinbase(coinbase_data), data))
             }
-            _ => Err(DeserializeError::InvalidData(format!("unknown witness type: {}", tag))),
+            _ => Err(DeserializeError::InvalidData(format!(
+                "unknown witness type: {}",
+                tag
+            ))),
         }
     }
 }

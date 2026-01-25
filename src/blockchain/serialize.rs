@@ -158,7 +158,9 @@ pub(crate) fn read_bytes(data: &[u8]) -> Result<(Vec<u8>, &[u8]), DeserializeErr
     Ok((data[..len].to_vec(), &data[len..]))
 }
 
-pub(crate) fn read_fixed_bytes<const N: usize>(data: &[u8]) -> Result<([u8; N], &[u8]), DeserializeError> {
+pub(crate) fn read_fixed_bytes<const N: usize>(
+    data: &[u8],
+) -> Result<([u8; N], &[u8]), DeserializeError> {
     if data.len() < N {
         return Err(DeserializeError::UnexpectedEof);
     }

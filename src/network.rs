@@ -65,16 +65,15 @@ mod service;
 mod sync;
 
 pub use message::{
-    InvItem, InvType, Message, MessageError, Services, TimestampedAddr,
-    NETWORK_MAGIC, PROTOCOL_VERSION,
-    MAX_ADDR_COUNT, MAX_INV_COUNT, MAX_LOCATOR_COUNT,
+    InvItem, InvType, MAX_ADDR_COUNT, MAX_INV_COUNT, MAX_LOCATOR_COUNT, Message, MessageError,
+    NETWORK_MAGIC, PROTOCOL_VERSION, Services, TimestampedAddr,
 };
-pub use peer::{Peer, PeerError, PeerHandle, PeerInfo, PeerState, HEADER_SIZE, MAX_MESSAGE_SIZE};
+pub use peer::{HEADER_SIZE, MAX_MESSAGE_SIZE, Peer, PeerError, PeerHandle, PeerInfo, PeerState};
 pub use service::{NetworkConfig, NetworkError, NetworkEvent, NetworkService};
 pub use sync::{SyncError, SyncManager, SyncState};
 
 // Re-export constants from the centralized constants module
 pub use crate::constants::{
-    DEFAULT_PORT, MAX_BLOCKS_IN_FLIGHT, MAX_HEADERS_COUNT, MAX_OUTBOUND,
-    MAX_PEERS, MAX_PENDING_HEADERS, PING_INTERVAL_SECS, PING_TIMEOUT_SECS,
+    DEFAULT_PORT, MAX_BLOCKS_IN_FLIGHT, MAX_HEADERS_COUNT, MAX_OUTBOUND, MAX_PEERS,
+    MAX_PENDING_HEADERS, PING_INTERVAL_SECS, PING_TIMEOUT_SECS,
 };

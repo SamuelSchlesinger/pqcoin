@@ -19,8 +19,8 @@
 use crate::blockchain::{Address, Block, BlockHeader, Blockchain, Transaction};
 use crate::constants::MAX_BLOCK_TXS;
 use crate::mempool::Mempool;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Result of a mining attempt.
 pub enum MineResult {

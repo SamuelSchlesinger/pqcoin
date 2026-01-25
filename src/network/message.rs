@@ -17,7 +17,9 @@
 //!
 //! These limits are enforced during deserialization, before memory allocation.
 
-use crate::blockchain::{Block, BlockHeader, Deserialize, DeserializeError, Serialize, Transaction};
+use crate::blockchain::{
+    Block, BlockHeader, Deserialize, DeserializeError, Serialize, Transaction,
+};
 use crate::constants::MAX_HEADERS_COUNT;
 use crate::crypto::Hash;
 use std::net::SocketAddr;
@@ -137,7 +139,12 @@ impl Deserialize for InvType {
         let inv_type = match data[0] {
             1 => InvType::Tx,
             2 => InvType::Block,
-            n => return Err(DeserializeError::InvalidData(format!("unknown inv type: {}", n))),
+            n => {
+                return Err(DeserializeError::InvalidData(format!(
+                    "unknown inv type: {}",
+                    n
+                )));
+            }
         };
         Ok((inv_type, &data[1..]))
     }
@@ -426,7 +433,9 @@ impl Message {
     /// Deserialize a message from a complete frame (header + payload).
     pub fn deserialize_with_header(data: &[u8]) -> Result<Self, MessageError> {
         if data.len() < 24 {
-            return Err(MessageError::DeserializeError(DeserializeError::UnexpectedEof));
+            return Err(MessageError::DeserializeError(
+                DeserializeError::UnexpectedEof,
+            ));
         }
 
         // Verify magic
@@ -448,7 +457,9 @@ impl Message {
 
         // Verify we have the full payload
         if data.len() < 24 + length as usize {
-            return Err(MessageError::DeserializeError(DeserializeError::UnexpectedEof));
+            return Err(MessageError::DeserializeError(
+                DeserializeError::UnexpectedEof,
+            ));
         }
 
         let payload = &data[24..24 + length as usize];
@@ -469,7 +480,9 @@ impl Message {
             "version" => {
                 // version(4) + services(8) + timestamp(8) + height(8) + nonce(8) = 36 minimum
                 if data.len() < 36 {
-                    return Err(MessageError::DeserializeError(DeserializeError::UnexpectedEof));
+                    return Err(MessageError::DeserializeError(
+                        DeserializeError::UnexpectedEof,
+                    ));
                 }
                 let version = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
                 let services_bits = u64::from_le_bytes([
@@ -505,7 +518,9 @@ impl Message {
             "addr" => {
                 let (count, rest) = read_var_int(data)?;
                 if count > MAX_ADDR_COUNT as u64 {
-                    return Err(MessageError::DeserializeError(DeserializeError::LengthOverflow));
+                    return Err(MessageError::DeserializeError(
+                        DeserializeError::LengthOverflow,
+                    ));
                 }
                 let mut addrs = Vec::with_capacity(count as usize);
                 let mut data = rest;
@@ -519,23 +534,32 @@ impl Message {
             "addrv2" => {
                 let (count, rest) = read_var_int(data)?;
                 if count > MAX_ADDR_COUNT as u64 {
-                    return Err(MessageError::DeserializeError(DeserializeError::LengthOverflow));
+                    return Err(MessageError::DeserializeError(
+                        DeserializeError::LengthOverflow,
+                    ));
                 }
                 let mut addrs = Vec::with_capacity(count as usize);
                 let mut data = rest;
                 for _ in 0..count {
                     if data.len() < 16 {
-                        return Err(MessageError::DeserializeError(DeserializeError::UnexpectedEof));
+                        return Err(MessageError::DeserializeError(
+                            DeserializeError::UnexpectedEof,
+                        ));
                     }
                     let timestamp = u64::from_le_bytes([
                         data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
                     ]);
                     let services_bits = u64::from_le_bytes([
-                        data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
+                        data[8], data[9], data[10], data[11], data[12], data[13], data[14],
+                        data[15],
                     ]);
                     let services = Services::from_bits_truncate(services_bits);
                     let (addr, rest) = deserialize_socket_addr(&data[16..])?;
-                    addrs.push(TimestampedAddr { timestamp, services, addr });
+                    addrs.push(TimestampedAddr {
+                        timestamp,
+                        services,
+                        addr,
+                    });
                     data = rest;
                 }
                 Ok(Message::AddrV2 { addrs })
@@ -543,7 +567,9 @@ impl Message {
             "inv" => {
                 let (count, rest) = read_var_int(data)?;
                 if count > MAX_INV_COUNT as u64 {
-                    return Err(MessageError::DeserializeError(DeserializeError::LengthOverflow));
+                    return Err(MessageError::DeserializeError(
+                        DeserializeError::LengthOverflow,
+                    ));
                 }
                 let mut items = Vec::with_capacity(count as usize);
                 let mut data = rest;
@@ -557,7 +583,9 @@ impl Message {
             "getdata" => {
                 let (count, rest) = read_var_int(data)?;
                 if count > MAX_INV_COUNT as u64 {
-                    return Err(MessageError::DeserializeError(DeserializeError::LengthOverflow));
+                    return Err(MessageError::DeserializeError(
+                        DeserializeError::LengthOverflow,
+                    ));
                 }
                 let mut items = Vec::with_capacity(count as usize);
                 let mut data = rest;
@@ -571,13 +599,17 @@ impl Message {
             "getheaders" => {
                 let (count, rest) = read_var_int(data)?;
                 if count > MAX_LOCATOR_COUNT as u64 {
-                    return Err(MessageError::DeserializeError(DeserializeError::LengthOverflow));
+                    return Err(MessageError::DeserializeError(
+                        DeserializeError::LengthOverflow,
+                    ));
                 }
                 let mut locator = Vec::with_capacity(count as usize);
                 let mut data = rest;
                 for _ in 0..count {
                     if data.len() < 64 {
-                        return Err(MessageError::DeserializeError(DeserializeError::UnexpectedEof));
+                        return Err(MessageError::DeserializeError(
+                            DeserializeError::UnexpectedEof,
+                        ));
                     }
                     let mut hash_bytes = [0u8; 64];
                     hash_bytes.copy_from_slice(&data[..64]);
@@ -585,7 +617,9 @@ impl Message {
                     data = &data[64..];
                 }
                 if data.len() < 64 {
-                    return Err(MessageError::DeserializeError(DeserializeError::UnexpectedEof));
+                    return Err(MessageError::DeserializeError(
+                        DeserializeError::UnexpectedEof,
+                    ));
                 }
                 let mut stop_bytes = [0u8; 64];
                 stop_bytes.copy_from_slice(&data[..64]);
@@ -595,7 +629,9 @@ impl Message {
             "headers" => {
                 let (count, rest) = read_var_int(data)?;
                 if count > MAX_HEADERS_COUNT as u64 {
-                    return Err(MessageError::DeserializeError(DeserializeError::LengthOverflow));
+                    return Err(MessageError::DeserializeError(
+                        DeserializeError::LengthOverflow,
+                    ));
                 }
                 let mut headers = Vec::with_capacity(count as usize);
                 let mut data = rest;
@@ -616,7 +652,9 @@ impl Message {
             }
             "ping" => {
                 if data.len() < 8 {
-                    return Err(MessageError::DeserializeError(DeserializeError::UnexpectedEof));
+                    return Err(MessageError::DeserializeError(
+                        DeserializeError::UnexpectedEof,
+                    ));
                 }
                 let nonce = u64::from_le_bytes([
                     data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
@@ -625,7 +663,9 @@ impl Message {
             }
             "pong" => {
                 if data.len() < 8 {
-                    return Err(MessageError::DeserializeError(DeserializeError::UnexpectedEof));
+                    return Err(MessageError::DeserializeError(
+                        DeserializeError::UnexpectedEof,
+                    ));
                 }
                 let nonce = u64::from_le_bytes([
                     data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7],
@@ -764,7 +804,10 @@ fn deserialize_socket_addr(data: &[u8]) -> Result<(SocketAddr, &[u8]), Deseriali
             let port = u16::from_be_bytes([data[17], data[18]]);
             Ok((SocketAddr::from((ip, port)), &data[19..]))
         }
-        n => Err(DeserializeError::InvalidData(format!("unknown address type: {}", n))),
+        n => Err(DeserializeError::InvalidData(format!(
+            "unknown address type: {}",
+            n
+        ))),
     }
 }
 
@@ -796,7 +839,17 @@ mod tests {
         };
         let serialized = msg.serialize_with_header();
         let decoded = Message::deserialize_with_header(&serialized).unwrap();
-        if let Message::Version { version, services, height, nonce, addr, user_agent, relay, .. } = decoded {
+        if let Message::Version {
+            version,
+            services,
+            height,
+            nonce,
+            addr,
+            user_agent,
+            relay,
+            ..
+        } = decoded
+        {
             assert_eq!(version, PROTOCOL_VERSION);
             assert_eq!(services, Services::NODE_NETWORK);
             assert_eq!(height, 12345);
@@ -828,10 +881,15 @@ mod tests {
             InvItem::block(crate::crypto::hash(b"block1")),
             InvItem::tx(crate::crypto::hash(b"tx1")),
         ];
-        let msg = Message::Inv { items: items.clone() };
+        let msg = Message::Inv {
+            items: items.clone(),
+        };
         let serialized = msg.serialize_with_header();
         let decoded = Message::deserialize_with_header(&serialized).unwrap();
-        if let Message::Inv { items: decoded_items } = decoded {
+        if let Message::Inv {
+            items: decoded_items,
+        } = decoded
+        {
             assert_eq!(items, decoded_items);
         } else {
             panic!("expected Inv message");
@@ -905,10 +963,15 @@ mod tests {
             "192.168.1.1:8334".parse().unwrap(),
             "[::1]:8335".parse().unwrap(),
         ];
-        let msg = Message::Addr { addrs: addrs.clone() };
+        let msg = Message::Addr {
+            addrs: addrs.clone(),
+        };
         let serialized = msg.serialize_with_header();
         let decoded = Message::deserialize_with_header(&serialized).unwrap();
-        if let Message::Addr { addrs: decoded_addrs } = decoded {
+        if let Message::Addr {
+            addrs: decoded_addrs,
+        } = decoded
+        {
             assert_eq!(addrs, decoded_addrs);
         } else {
             panic!("expected Addr message");
@@ -922,10 +985,17 @@ mod tests {
             crate::crypto::hash(b"block2"),
         ];
         let stop = crate::crypto::hash(b"stop");
-        let msg = Message::GetHeaders { locator: locator.clone(), stop };
+        let msg = Message::GetHeaders {
+            locator: locator.clone(),
+            stop,
+        };
         let serialized = msg.serialize_with_header();
         let decoded = Message::deserialize_with_header(&serialized).unwrap();
-        if let Message::GetHeaders { locator: decoded_locator, stop: decoded_stop } = decoded {
+        if let Message::GetHeaders {
+            locator: decoded_locator,
+            stop: decoded_stop,
+        } = decoded
+        {
             assert_eq!(locator, decoded_locator);
             assert_eq!(stop, decoded_stop);
         } else {
@@ -955,10 +1025,15 @@ mod tests {
             InvItem::block(crate::crypto::hash(b"block1")),
             InvItem::tx(crate::crypto::hash(b"tx1")),
         ];
-        let msg = Message::GetData { items: items.clone() };
+        let msg = Message::GetData {
+            items: items.clone(),
+        };
         let serialized = msg.serialize_with_header();
         let decoded = Message::deserialize_with_header(&serialized).unwrap();
-        if let Message::GetData { items: decoded_items } = decoded {
+        if let Message::GetData {
+            items: decoded_items,
+        } = decoded
+        {
             assert_eq!(items, decoded_items);
         } else {
             panic!("expected GetData message");

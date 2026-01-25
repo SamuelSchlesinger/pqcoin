@@ -126,7 +126,8 @@ impl WalletStorage {
 
         let mut wallets = Vec::new();
         for entry in entries {
-            let entry = entry.map_err(|e| WalletError::Io(format!("failed to read entry: {}", e)))?;
+            let entry =
+                entry.map_err(|e| WalletError::Io(format!("failed to read entry: {}", e)))?;
             let path = entry.path();
 
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {

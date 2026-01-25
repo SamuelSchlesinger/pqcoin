@@ -1,8 +1,8 @@
 //! Dust limit calculation.
 
-use crate::constants::DUST_FEE_RATE;
 use super::locking::LockingCondition;
 use super::output::TxOutput;
+use crate::constants::DUST_FEE_RATE;
 
 /// Calculate the dust limit for a given locking condition.
 ///

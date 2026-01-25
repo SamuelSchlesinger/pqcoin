@@ -9,7 +9,9 @@ use jsonrpsee::types::ErrorObjectOwned;
 use serde::{Deserialize, Serialize};
 
 use super::ApiState;
-use crate::blockchain::{Block, Deserialize as BlockDeserialize, Serialize as BlockSerialize, Transaction};
+use crate::blockchain::{
+    Block, Deserialize as BlockDeserialize, Serialize as BlockSerialize, Transaction,
+};
 use crate::crypto::Hash;
 
 /// Blockchain info response.
@@ -187,7 +189,11 @@ fn block_to_info(block: &Block, height: u64) -> BlockInfo {
         difficulty: block.header.difficulty_bits,
         nonce: hex::encode(block.header.nonce),
         tx_count: block.transactions.len(),
-        txids: block.transactions.iter().map(|tx| tx.txid().to_hex()).collect(),
+        txids: block
+            .transactions
+            .iter()
+            .map(|tx| tx.txid().to_hex())
+            .collect(),
     }
 }
 
@@ -344,7 +350,10 @@ impl PqcoinRpcServer for RpcServerImpl {
 }
 
 /// Run the JSON-RPC server.
-pub async fn run_rpc_server(state: ApiState, addr: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn run_rpc_server(
+    state: ApiState,
+    addr: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let server = Server::builder().build(addr).await?;
 
     let rpc_impl = RpcServerImpl::new(state);

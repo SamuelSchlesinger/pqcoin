@@ -79,9 +79,7 @@ fn read_password(prompt: &str) -> io::Result<String> {
 }
 
 fn get_wallet_path(cli: &Cli) -> PathBuf {
-    cli.wallet
-        .clone()
-        .unwrap_or_else(Wallet::default_path)
+    cli.wallet.clone().unwrap_or_else(Wallet::default_path)
 }
 
 async fn rpc_call<T: serde::de::DeserializeOwned>(
@@ -114,7 +112,10 @@ async fn rpc_call<T: serde::de::DeserializeOwned>(
         if !error.is_null() {
             return Err(WalletError::Rpc(format!(
                 "RPC error: {}",
-                error.get("message").and_then(|m| m.as_str()).unwrap_or("unknown")
+                error
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("unknown")
             )));
         }
     }
@@ -150,8 +151,8 @@ async fn cmd_create(cli: &Cli, name: &str) -> Result<(), WalletError> {
         return Ok(());
     }
 
-    let password = read_password("Enter wallet password: ")
-        .map_err(|e| WalletError::Io(e.to_string()))?;
+    let password =
+        read_password("Enter wallet password: ").map_err(|e| WalletError::Io(e.to_string()))?;
 
     if password.len() < 8 {
         return Err(WalletError::InvalidFormat(
@@ -159,8 +160,8 @@ async fn cmd_create(cli: &Cli, name: &str) -> Result<(), WalletError> {
         ));
     }
 
-    let confirm = read_password("Confirm password: ")
-        .map_err(|e| WalletError::Io(e.to_string()))?;
+    let confirm =
+        read_password("Confirm password: ").map_err(|e| WalletError::Io(e.to_string()))?;
 
     if password != confirm {
         return Err(WalletError::InvalidFormat("Passwords do not match".into()));
@@ -225,8 +226,8 @@ async fn cmd_send(cli: &Cli, to: &str, amount: u64, fee: u64) -> Result<(), Wall
     let to_address = Address::from_hash(pqcoin::crypto::Hash::from_bytes(to_arr));
 
     // Unlock wallet
-    let password = read_password("Enter wallet password: ")
-        .map_err(|e| WalletError::Io(e.to_string()))?;
+    let password =
+        read_password("Enter wallet password: ").map_err(|e| WalletError::Io(e.to_string()))?;
 
     wallet.unlock(&password)?;
 
@@ -234,14 +235,16 @@ async fn cmd_send(cli: &Cli, to: &str, amount: u64, fee: u64) -> Result<(), Wall
 
     // Get UTXOs from RPC
     let address_hex = wallet.address().to_hex();
-    let utxos: Vec<UtxoResponse> = rpc_call(&cli.rpc, "getutxos", serde_json::json!([address_hex])).await?;
+    let utxos: Vec<UtxoResponse> =
+        rpc_call(&cli.rpc, "getutxos", serde_json::json!([address_hex])).await?;
 
     if utxos.is_empty() {
         return Err(WalletError::Crypto("no UTXOs available".into()));
     }
 
     // Get current height
-    let info: BlockchainInfoResponse = rpc_call(&cli.rpc, "getblockchaininfo", serde_json::json!([])).await?;
+    let info: BlockchainInfoResponse =
+        rpc_call(&cli.rpc, "getblockchaininfo", serde_json::json!([])).await?;
 
     // Convert UTXOs
     let utxo_inputs: Vec<UtxoInput> = utxos
@@ -276,7 +279,8 @@ async fn cmd_send(cli: &Cli, to: &str, amount: u64, fee: u64) -> Result<(), Wall
     // Serialize and send
     let tx_hex = hex::encode(pqcoin::blockchain::Serialize::to_bytes(&tx));
 
-    let txid: String = rpc_call(&cli.rpc, "sendrawtransaction", serde_json::json!([tx_hex])).await?;
+    let txid: String =
+        rpc_call(&cli.rpc, "sendrawtransaction", serde_json::json!([tx_hex])).await?;
 
     println!("Transaction sent!");
     println!("TXID: {}", txid);

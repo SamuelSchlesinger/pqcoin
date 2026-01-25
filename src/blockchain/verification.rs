@@ -47,9 +47,9 @@ pub(crate) fn verify_transactions_parallel(
             let mut input_sum = 0u64;
 
             for (input_index, utxo_opt, message, witness) in input_data {
-                let utxo = utxo_opt
-                    .as_ref()
-                    .ok_or(BlockchainError::MissingInput(tx.inputs[*input_index].outpoint))?;
+                let utxo = utxo_opt.as_ref().ok_or(BlockchainError::MissingInput(
+                    tx.inputs[*input_index].outpoint,
+                ))?;
 
                 // Coinbase outputs need maturity before they can be spent
                 if utxo.is_coinbase && height < utxo.height + COINBASE_MATURITY {
@@ -140,7 +140,13 @@ fn verify_witness(
     message: &Hash,
 ) -> Result<(), BlockchainError> {
     match (condition, witness) {
-        (LockingCondition::P2PKH(address), Witness::P2PKH { public_key, signature }) => {
+        (
+            LockingCondition::P2PKH(address),
+            Witness::P2PKH {
+                public_key,
+                signature,
+            },
+        ) => {
             // Verify the public key hashes to the address
             if Address::from_public_key(public_key) != *address {
                 return Err(BlockchainError::InvalidWitness);
@@ -151,7 +157,10 @@ fn verify_witness(
             }
         }
         (
-            LockingCondition::Multisig { threshold, public_keys },
+            LockingCondition::Multisig {
+                threshold,
+                public_keys,
+            },
             Witness::Multisig {
                 public_keys: witness_keys,
                 signatures,

@@ -90,7 +90,10 @@ fn test_witness_p2pkh_serialization() {
     let decoded = Witness::from_bytes(&bytes).unwrap();
 
     match decoded {
-        Witness::P2PKH { public_key, signature } => {
+        Witness::P2PKH {
+            public_key,
+            signature,
+        } => {
             // Verify signature still works after serialization roundtrip
             assert!(crypto::ml_dsa_87::verify(&public_key, message, &signature));
         }
@@ -130,7 +133,10 @@ fn test_witness_multisig_serialization() {
     let decoded = Witness::from_bytes(&bytes).unwrap();
 
     match decoded {
-        Witness::Multisig { public_keys, signatures } => {
+        Witness::Multisig {
+            public_keys,
+            signatures,
+        } => {
             assert_eq!(public_keys.len(), 2);
             assert_eq!(signatures.len(), 2);
             assert!(signatures[0].is_some());
@@ -160,7 +166,10 @@ fn test_locking_condition_multisig_serialization() {
     let decoded = LockingCondition::from_bytes(&bytes).unwrap();
 
     match decoded {
-        LockingCondition::Multisig { threshold, public_keys } => {
+        LockingCondition::Multisig {
+            threshold,
+            public_keys,
+        } => {
             assert_eq!(threshold, 2);
             assert_eq!(public_keys.len(), 2);
         }
@@ -484,13 +493,12 @@ fn test_blockchain() -> (Blockchain, PublicKey, SecretKey, Address) {
     let mut timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_secs() - (COINBASE_MATURITY + 10) * 600; // Start in the past
+        .as_secs()
+        - (COINBASE_MATURITY + 10) * 600; // Start in the past
 
     let genesis = create_genesis_block(
-        timestamp,
-        0x40ffffff, // Easy difficulty
-        50_000_000,
-        address,
+        timestamp, 0x40ffffff, // Easy difficulty
+        50_000_000, address,
     );
     let mut chain = Blockchain::new(genesis, 2016, 600, 50_000_000, 210_000);
 
@@ -521,10 +529,7 @@ fn test_blockchain() -> (Blockchain, PublicKey, SecretKey, Address) {
 }
 
 /// Helper to find a mature UTXO that can be spent
-fn find_mature_utxo<'a>(
-    chain: &'a Blockchain,
-    address: &Address,
-) -> (OutPoint, &'a Utxo) {
+fn find_mature_utxo<'a>(chain: &'a Blockchain, address: &Address) -> (OutPoint, &'a Utxo) {
     let utxos = chain.utxos_for_address(address);
     utxos
         .into_iter()
@@ -569,11 +574,7 @@ fn create_spending_tx(
 }
 
 /// Helper to create a block containing transactions
-fn create_block_with_txs(
-    chain: &Blockchain,
-    txs: Vec<Transaction>,
-    recipient: Address,
-) -> Block {
+fn create_block_with_txs(chain: &Blockchain, txs: Vec<Transaction>, recipient: Address) -> Block {
     let prev_block = chain.tip();
     let height = chain.height() + 1;
     let reward = chain.block_reward(height);
@@ -680,7 +681,8 @@ fn test_insufficient_multisig_signatures_rejected() {
     let miner_address = Address::from_public_key(&miner_pk);
 
     // Create a 2-of-3 multisig output in genesis
-    let multisig_condition = LockingCondition::multisig(2, vec![pk1.clone(), pk2.clone(), pk3.clone()]);
+    let multisig_condition =
+        LockingCondition::multisig(2, vec![pk1.clone(), pk2.clone(), pk3.clone()]);
     let coinbase = Transaction {
         version: Transaction::CURRENT_VERSION,
         inputs: vec![TxInput::coinbase(&0u64.to_le_bytes())],
@@ -693,7 +695,8 @@ fn test_insufficient_multisig_signatures_rejected() {
     let mut timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_secs() - (COINBASE_MATURITY + 10) * 600;
+        .as_secs()
+        - (COINBASE_MATURITY + 10) * 600;
 
     let genesis_header = BlockHeader {
         version: BlockHeader::CURRENT_VERSION,
@@ -739,7 +742,11 @@ fn test_insufficient_multisig_signatures_rejected() {
         outpoint,
         Witness::Multisig {
             public_keys: vec![pk1.clone(), pk2.clone(), pk3.clone()],
-            signatures: vec![Some(crypto::ml_dsa_87::sign(&sk1, b"placeholder")), None, None],
+            signatures: vec![
+                Some(crypto::ml_dsa_87::sign(&sk1, b"placeholder")),
+                None,
+                None,
+            ],
         },
     )];
     let outputs = vec![TxOutput::p2pkh(50_000_000, recipient_address)];
@@ -814,7 +821,10 @@ fn test_spending_immature_coinbase_rejected() {
     // This should fail because the coinbase is immature
     let block2 = create_block_with_txs(&chain, vec![tx], recipient_address);
     let result = chain.add_block(block2);
-    assert!(matches!(result, Err(BlockchainError::ImmatureCoinbase { .. })));
+    assert!(matches!(
+        result,
+        Err(BlockchainError::ImmatureCoinbase { .. })
+    ));
 }
 
 #[test]
@@ -896,7 +906,9 @@ fn test_dust_output_rejected() {
         matches!(result, Err(BlockchainError::DustOutput { index: 0, amount, limit })
             if amount == dust_amount && limit == expected_dust_limit),
         "Expected DustOutput error with amount {} and limit {}, got {:?}",
-        dust_amount, expected_dust_limit, result
+        dust_amount,
+        expected_dust_limit,
+        result
     );
 }
 
@@ -920,16 +932,23 @@ fn test_dust_limit_scales_with_output_type() {
     assert!(
         multisig_limit > p2pkh_limit,
         "Multisig dust limit ({}) should be greater than P2PKH ({})",
-        multisig_limit, p2pkh_limit
+        multisig_limit,
+        p2pkh_limit
     );
 
     // Verify reasonable values (at DUST_FEE_RATE = 100 quanta/KB)
     // P2PKH spend size: ~7,288 bytes -> dust ~728 quanta
     // 2-of-3 Multisig spend size: ~17,028 bytes -> dust ~1,702 quanta
-    assert!(p2pkh_limit > 500 && p2pkh_limit < 1500,
-        "P2PKH dust limit {} outside expected range", p2pkh_limit);
-    assert!(multisig_limit > 1000 && multisig_limit < 3000,
-        "Multisig dust limit {} outside expected range", multisig_limit);
+    assert!(
+        p2pkh_limit > 500 && p2pkh_limit < 1500,
+        "P2PKH dust limit {} outside expected range",
+        p2pkh_limit
+    );
+    assert!(
+        multisig_limit > 1000 && multisig_limit < 3000,
+        "Multisig dust limit {} outside expected range",
+        multisig_limit
+    );
 }
 
 // ========================================================================
@@ -950,15 +969,8 @@ fn test_blockchain_persistence() {
 
     // Open blockchain with storage, add a block
     {
-        let chain = Blockchain::open(
-            dir.path(),
-            genesis.clone(),
-            2016,
-            600,
-            50_000_000,
-            210_000,
-        )
-        .expect("failed to open blockchain");
+        let chain = Blockchain::open(dir.path(), genesis.clone(), 2016, 600, 50_000_000, 210_000)
+            .expect("failed to open blockchain");
 
         assert!(chain.has_storage());
         assert_eq!(chain.height(), 0);
@@ -967,15 +979,8 @@ fn test_blockchain_persistence() {
 
     // Reopen and verify state persisted
     {
-        let chain = Blockchain::open(
-            dir.path(),
-            genesis.clone(),
-            2016,
-            600,
-            50_000_000,
-            210_000,
-        )
-        .expect("failed to reopen blockchain");
+        let chain = Blockchain::open(dir.path(), genesis.clone(), 2016, 600, 50_000_000, 210_000)
+            .expect("failed to reopen blockchain");
 
         assert_eq!(chain.height(), 0);
         assert_eq!(chain.tip_hash(), genesis_hash);

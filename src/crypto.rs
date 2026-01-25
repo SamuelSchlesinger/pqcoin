@@ -239,7 +239,9 @@ pub mod ml_dsa_87 {
 
         /// Deserialize a signature from bytes.
         pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-            dilithium5::DetachedSignature::from_bytes(bytes).ok().map(Self)
+            dilithium5::DetachedSignature::from_bytes(bytes)
+                .ok()
+                .map(Self)
         }
 
         /// Get the size of the signature in bytes.

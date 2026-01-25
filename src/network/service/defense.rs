@@ -5,7 +5,9 @@
 //! - `RateLimiter`: Prevents DoS attacks by limiting connection attempts
 //! - `SubnetLimiter`: Protects against eclipse attacks by limiting connections per subnet
 
-use crate::constants::{BAN_DURATION_SECS, CONNECTION_RATE_LIMIT_SECS, MAX_CONNECTIONS_PER_IP, MAX_PER_SUBNET};
+use crate::constants::{
+    BAN_DURATION_SECS, CONNECTION_RATE_LIMIT_SECS, MAX_CONNECTIONS_PER_IP, MAX_PER_SUBNET,
+};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
@@ -109,9 +111,8 @@ impl RateLimiter {
         let now = Instant::now();
         let stale_threshold = Duration::from_secs(3600); // 1 hour
 
-        self.ip_last_connect.retain(|_, last| {
-            now.duration_since(*last) < stale_threshold
-        });
+        self.ip_last_connect
+            .retain(|_, last| now.duration_since(*last) < stale_threshold);
     }
 }
 

@@ -1,8 +1,6 @@
 //! Blockchain state management.
 
-use crate::constants::{
-    MAX_BLOCK_SIZE, MAX_FUTURE_BLOCK_TIME, MAX_TX_INPUTS, MAX_TX_OUTPUTS,
-};
+use crate::constants::{MAX_BLOCK_SIZE, MAX_FUTURE_BLOCK_TIME, MAX_TX_INPUTS, MAX_TX_OUTPUTS};
 use crate::crypto::Hash;
 use crate::storage::{LmdbStorage, StorageError, StorageWrite, StorageWriteTxn};
 use std::collections::HashMap;
@@ -13,12 +11,15 @@ use super::address::Address;
 use super::block::Block;
 use super::checkpoint::validate_checkpoint;
 use super::difficulty::{calculate_new_difficulty, expected_difficulty_at, median_time_past};
-use super::dust::is_dust;
 pub(crate) use super::dust::dust_limit;
+use super::dust::is_dust;
 use super::error::BlockchainError;
 use super::locking::LockingCondition;
 use super::outpoint::OutPoint;
-use super::reorg::{apply_block, apply_block_to_storage, find_block_containing_tx, reorganize_to, reorganize_to_with_storage};
+use super::reorg::{
+    apply_block, apply_block_to_storage, find_block_containing_tx, reorganize_to,
+    reorganize_to_with_storage,
+};
 use super::serialize::Serialize;
 use super::utxo::Utxo;
 use super::verification::verify_transactions_parallel;
@@ -189,30 +190,18 @@ impl Blockchain {
 
     /// Load blockchain state from initialized storage.
     fn load_from_storage(storage: LmdbStorage) -> Result<Self, BlockchainError> {
-        let config = storage.load_config()?.ok_or_else(|| {
-            StorageError::Corruption("storage not initialized".to_string())
-        })?;
+        let config = storage
+            .load_config()?
+            .ok_or_else(|| StorageError::Corruption("storage not initialized".to_string()))?;
 
         // Load all data into in-memory caches
-        let blocks: HashMap<Hash, Block> = storage
-            .load_all_blocks()?
-            .into_iter()
-            .collect();
+        let blocks: HashMap<Hash, Block> = storage.load_all_blocks()?.into_iter().collect();
 
-        let heights: HashMap<Hash, u64> = storage
-            .load_all_heights()?
-            .into_iter()
-            .collect();
+        let heights: HashMap<Hash, u64> = storage.load_all_heights()?.into_iter().collect();
 
-        let utxos: HashMap<OutPoint, Utxo> = storage
-            .load_all_utxos()?
-            .into_iter()
-            .collect();
+        let utxos: HashMap<OutPoint, Utxo> = storage.load_all_utxos()?.into_iter().collect();
 
-        let tx_index: HashMap<Hash, Hash> = storage
-            .load_all_tx_index()?
-            .into_iter()
-            .collect();
+        let tx_index: HashMap<Hash, Hash> = storage.load_all_tx_index()?.into_iter().collect();
 
         tracing::info!(
             blocks = blocks.len(),
@@ -338,8 +327,9 @@ impl Blockchain {
         }
 
         // Find the block at the start of this adjustment period
-        let period_start_height =
-            self.tip_height.saturating_sub(self.difficulty_adjustment_interval - 1);
+        let period_start_height = self
+            .tip_height
+            .saturating_sub(self.difficulty_adjustment_interval - 1);
         let mut block_hash = self.tip;
 
         // Walk back to find the period start block

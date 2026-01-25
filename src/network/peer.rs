@@ -21,7 +21,7 @@
 //! - **Old approach**: Allocate payload (10 MB) + copy to full_message (10 MB) = 20 MB peak
 //! - **New approach**: Single allocation for header + payload = 10 MB peak
 
-use crate::network::message::{Message, MessageError, Services, NETWORK_MAGIC, PROTOCOL_VERSION};
+use crate::network::message::{Message, MessageError, NETWORK_MAGIC, PROTOCOL_VERSION, Services};
 use std::net::SocketAddr;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
@@ -229,13 +229,18 @@ impl Peer {
             // Wait for their version
             let their_version = self.receive_message().await?;
             let (version, services, height, peer_nonce, relay) = match their_version {
-                Message::Version { version, services, height, nonce, relay, .. } => {
-                    (version, services, height, nonce, relay)
-                }
+                Message::Version {
+                    version,
+                    services,
+                    height,
+                    nonce,
+                    relay,
+                    ..
+                } => (version, services, height, nonce, relay),
                 _ => {
                     return Err(PeerError::HandshakeFailed(
                         "expected Version message".to_string(),
-                    ))
+                    ));
                 }
             };
 
@@ -271,13 +276,18 @@ impl Peer {
             // Wait for their version first
             let their_version = self.receive_message().await?;
             let (version, services, height, peer_nonce, relay) = match their_version {
-                Message::Version { version, services, height, nonce, relay, .. } => {
-                    (version, services, height, nonce, relay)
-                }
+                Message::Version {
+                    version,
+                    services,
+                    height,
+                    nonce,
+                    relay,
+                    ..
+                } => (version, services, height, nonce, relay),
                 _ => {
                     return Err(PeerError::HandshakeFailed(
                         "expected Version message".to_string(),
-                    ))
+                    ));
                 }
             };
 
@@ -350,7 +360,9 @@ impl Peer {
 
         // Read payload directly into the combined buffer
         if length > 0 {
-            self.stream.read_exact(&mut full_message[HEADER_SIZE..]).await?;
+            self.stream
+                .read_exact(&mut full_message[HEADER_SIZE..])
+                .await?;
         }
 
         let msg = Message::deserialize_with_header(&full_message)?;
@@ -432,7 +444,14 @@ mod tests {
 
         let client_handle = tokio::spawn(async move {
             let stream = TcpStream::connect(server_addr).await.unwrap();
-            let mut peer = Peer::new(2, server_addr, stream, true, "127.0.0.1:0".parse().unwrap(), 50);
+            let mut peer = Peer::new(
+                2,
+                server_addr,
+                stream,
+                true,
+                "127.0.0.1:0".parse().unwrap(),
+                50,
+            );
             peer.handshake().await.unwrap();
             assert_eq!(peer.state(), PeerState::Connected);
             assert!(peer.info().is_some());

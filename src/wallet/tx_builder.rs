@@ -148,9 +148,7 @@ impl TransactionBuilder {
         // Add change output if needed
         let change = total_selected - total_needed;
         if change > 0 {
-            let change_address = self
-                .change_address
-                .unwrap_or_else(|| keypair.address());
+            let change_address = self.change_address.unwrap_or_else(|| keypair.address());
             outputs.push(TxOutput::p2pkh(change, change_address));
         }
 
@@ -161,10 +159,8 @@ impl TransactionBuilder {
         for (i, _utxo) in selected.iter().enumerate() {
             let signing_data = tx.signing_data(i);
             let message_hash = hash(&signing_data);
-            let signature = crate::crypto::ml_dsa_87::sign(
-                keypair.secret_key(),
-                message_hash.as_bytes(),
-            );
+            let signature =
+                crate::crypto::ml_dsa_87::sign(keypair.secret_key(), message_hash.as_bytes());
 
             tx.inputs[i].witness = Witness::P2PKH {
                 public_key: keypair.public_key().clone(),

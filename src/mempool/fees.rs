@@ -21,7 +21,11 @@ impl Mempool {
     /// Get transactions for block template sorted by fee rate (fee per byte).
     ///
     /// Transactions with higher fee rates are selected first.
-    pub fn get_block_txs_with_fees(&self, max_txs: usize, blockchain: &Blockchain) -> Vec<Transaction> {
+    pub fn get_block_txs_with_fees(
+        &self,
+        max_txs: usize,
+        blockchain: &Blockchain,
+    ) -> Vec<Transaction> {
         let mut txs_with_fee_rate: Vec<(&Transaction, f64)> = self
             .txs
             .values()
@@ -37,9 +41,8 @@ impl Mempool {
             .collect();
 
         // Sort by fee rate descending (highest fee rate first)
-        txs_with_fee_rate.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        txs_with_fee_rate
+            .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         txs_with_fee_rate
             .into_iter()

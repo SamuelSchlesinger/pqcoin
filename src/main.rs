@@ -5,14 +5,14 @@
 
 use clap::Parser;
 use pqcoin::api;
-use pqcoin::blockchain::{create_genesis_block, Address, Blockchain};
+use pqcoin::blockchain::{Address, Blockchain, create_genesis_block};
 use pqcoin::config::Config;
 use pqcoin::constants::{
     DEFAULT_DIFFICULTY, HALVING_INTERVAL, INITIAL_REWARD, TEST_DIFFICULTY_INTERVAL,
     TEST_TARGET_BLOCK_TIME,
 };
 use pqcoin::crypto::ml_dsa_87;
-use pqcoin::miner::{mine_block, BackgroundMiner, MineResult};
+use pqcoin::miner::{BackgroundMiner, MineResult, mine_block};
 use pqcoin::network::{NetworkConfig, NetworkEvent, NetworkService};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -73,12 +73,8 @@ struct Cli {
 
 /// Initialize logging with the given configuration.
 fn init_logging(config: &pqcoin::config::LoggingConfig) {
-    let filter = EnvFilter::from_default_env().add_directive(
-        config
-            .level
-            .parse()
-            .unwrap_or_else(|_| Level::INFO.into()),
-    );
+    let filter = EnvFilter::from_default_env()
+        .add_directive(config.level.parse().unwrap_or_else(|_| Level::INFO.into()));
 
     if config.format == "json" {
         tracing_subscriber::fmt()

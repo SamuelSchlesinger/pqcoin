@@ -12,13 +12,13 @@ mod rpc;
 use crate::blockchain::Blockchain;
 use crate::mempool::Mempool;
 use crate::network::NetworkService;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 
 pub use health::health_router;
 pub use metrics::MetricsRegistry;
-pub use rpc::{run_rpc_server, PqcoinRpcServer};
+pub use rpc::{PqcoinRpcServer, run_rpc_server};
 
 /// Shared state for all API endpoints.
 #[derive(Clone)]

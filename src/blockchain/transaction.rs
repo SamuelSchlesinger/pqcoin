@@ -1,14 +1,14 @@
 //! Transaction type for transferring value.
 
-use crate::constants::{MAX_TX_INPUTS, MAX_TX_OUTPUTS};
-use crate::crypto::{self, Hash};
 use super::address::Address;
 use super::input::TxInput;
 use super::output::TxOutput;
 use super::serialize::{
-    Deserialize, DeserializeError, Serialize,
-    read_u32, read_var_int, write_u8, write_u32, write_var_int,
+    Deserialize, DeserializeError, Serialize, read_u32, read_var_int, write_u8, write_u32,
+    write_var_int,
 };
+use crate::constants::{MAX_TX_INPUTS, MAX_TX_OUTPUTS};
+use crate::crypto::{self, Hash};
 
 /// A transaction transferring value between outputs.
 ///

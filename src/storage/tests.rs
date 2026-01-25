@@ -6,9 +6,9 @@ use super::codecs::{BlockCodec, HashCodec, OutPointCodec, U64Codec, UtxoCodec};
 use super::lmdb::LmdbStorage;
 use super::{StorageRead, StorageWrite, StorageWriteTxn};
 use crate::blockchain::{
-    create_genesis_block, Address, Block, LockingCondition, OutPoint, TxOutput, Utxo,
+    Address, Block, LockingCondition, OutPoint, TxOutput, Utxo, create_genesis_block,
 };
-use crate::crypto::{hash, Hash};
+use crate::crypto::{Hash, hash};
 use heed::{BytesDecode, BytesEncode};
 
 // ============================================================================
@@ -219,7 +219,8 @@ fn test_storage_block_operations() {
     let block1_hash = block1.hash();
 
     let mut wtxn = storage.write_txn().expect("write_txn failed");
-    wtxn.put_block(&block1_hash, &block1).expect("put_block failed");
+    wtxn.put_block(&block1_hash, &block1)
+        .expect("put_block failed");
     wtxn.put_height(&block1_hash, 1).expect("put_height failed");
     wtxn.set_tip(&block1_hash, 1).expect("set_tip failed");
     wtxn.commit().expect("commit failed");
@@ -315,7 +316,9 @@ fn test_storage_tx_index_operations() {
 
     // Delete tx index entry
     let mut wtxn = storage.write_txn().expect("write_txn failed");
-    let deleted = wtxn.delete_tx_index(&new_txid).expect("delete_tx_index failed");
+    let deleted = wtxn
+        .delete_tx_index(&new_txid)
+        .expect("delete_tx_index failed");
     assert!(deleted);
     wtxn.commit().expect("commit failed");
 

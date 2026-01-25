@@ -53,7 +53,9 @@ impl LmdbStorage {
         };
 
         // Create or open databases
-        let mut wtxn = env.write_txn().map_err(|e| StorageError::Transaction(e.to_string()))?;
+        let mut wtxn = env
+            .write_txn()
+            .map_err(|e| StorageError::Transaction(e.to_string()))?;
 
         let blocks = env
             .create_database(&mut wtxn, Some("blocks"))
@@ -69,12 +71,12 @@ impl LmdbStorage {
                 error: e.to_string(),
             })?;
 
-        let utxos = env
-            .create_database(&mut wtxn, Some("utxos"))
-            .map_err(|e| StorageError::CreateDb {
-                name: "utxos",
-                error: e.to_string(),
-            })?;
+        let utxos =
+            env.create_database(&mut wtxn, Some("utxos"))
+                .map_err(|e| StorageError::CreateDb {
+                    name: "utxos",
+                    error: e.to_string(),
+                })?;
 
         let tx_index = env
             .create_database(&mut wtxn, Some("tx_index"))
@@ -90,7 +92,8 @@ impl LmdbStorage {
                 error: e.to_string(),
             })?;
 
-        wtxn.commit().map_err(|e| StorageError::Commit(e.to_string()))?;
+        wtxn.commit()
+            .map_err(|e| StorageError::Commit(e.to_string()))?;
 
         Ok(Self {
             env,
@@ -159,7 +162,10 @@ impl LmdbStorage {
 
     /// Load all blocks from storage.
     pub fn load_all_blocks(&self) -> Result<Vec<(Hash, Block)>, StorageError> {
-        let rtxn = self.env.read_txn().map_err(|e| StorageError::Transaction(e.to_string()))?;
+        let rtxn = self
+            .env
+            .read_txn()
+            .map_err(|e| StorageError::Transaction(e.to_string()))?;
         let mut blocks = Vec::new();
 
         let iter = self
@@ -177,7 +183,10 @@ impl LmdbStorage {
 
     /// Load all block heights from storage.
     pub fn load_all_heights(&self) -> Result<Vec<(Hash, u64)>, StorageError> {
-        let rtxn = self.env.read_txn().map_err(|e| StorageError::Transaction(e.to_string()))?;
+        let rtxn = self
+            .env
+            .read_txn()
+            .map_err(|e| StorageError::Transaction(e.to_string()))?;
         let mut heights = Vec::new();
 
         let iter = self
@@ -195,7 +204,10 @@ impl LmdbStorage {
 
     /// Load all UTXOs from storage.
     pub fn load_all_utxos(&self) -> Result<Vec<(OutPoint, Utxo)>, StorageError> {
-        let rtxn = self.env.read_txn().map_err(|e| StorageError::Transaction(e.to_string()))?;
+        let rtxn = self
+            .env
+            .read_txn()
+            .map_err(|e| StorageError::Transaction(e.to_string()))?;
         let mut utxos = Vec::new();
 
         let iter = self
@@ -213,7 +225,10 @@ impl LmdbStorage {
 
     /// Load all transaction index entries from storage.
     pub fn load_all_tx_index(&self) -> Result<Vec<(Hash, Hash)>, StorageError> {
-        let rtxn = self.env.read_txn().map_err(|e| StorageError::Transaction(e.to_string()))?;
+        let rtxn = self
+            .env
+            .read_txn()
+            .map_err(|e| StorageError::Transaction(e.to_string()))?;
         let mut entries = Vec::new();
 
         let iter = self
@@ -264,35 +279,50 @@ impl LmdbStorage {
 
 impl StorageRead for LmdbStorage {
     fn get_block(&self, hash: &Hash) -> Result<Option<Block>, StorageError> {
-        let rtxn = self.env.read_txn().map_err(|e| StorageError::Transaction(e.to_string()))?;
+        let rtxn = self
+            .env
+            .read_txn()
+            .map_err(|e| StorageError::Transaction(e.to_string()))?;
         self.blocks
             .get(&rtxn, hash)
             .map_err(|e| StorageError::Read(e.to_string()))
     }
 
     fn get_height(&self, hash: &Hash) -> Result<Option<u64>, StorageError> {
-        let rtxn = self.env.read_txn().map_err(|e| StorageError::Transaction(e.to_string()))?;
+        let rtxn = self
+            .env
+            .read_txn()
+            .map_err(|e| StorageError::Transaction(e.to_string()))?;
         self.heights
             .get(&rtxn, hash)
             .map_err(|e| StorageError::Read(e.to_string()))
     }
 
     fn get_utxo(&self, outpoint: &OutPoint) -> Result<Option<Utxo>, StorageError> {
-        let rtxn = self.env.read_txn().map_err(|e| StorageError::Transaction(e.to_string()))?;
+        let rtxn = self
+            .env
+            .read_txn()
+            .map_err(|e| StorageError::Transaction(e.to_string()))?;
         self.utxos
             .get(&rtxn, outpoint)
             .map_err(|e| StorageError::Read(e.to_string()))
     }
 
     fn get_tx_block(&self, txid: &Hash) -> Result<Option<Hash>, StorageError> {
-        let rtxn = self.env.read_txn().map_err(|e| StorageError::Transaction(e.to_string()))?;
+        let rtxn = self
+            .env
+            .read_txn()
+            .map_err(|e| StorageError::Transaction(e.to_string()))?;
         self.tx_index
             .get(&rtxn, txid)
             .map_err(|e| StorageError::Read(e.to_string()))
     }
 
     fn get_metadata(&self, key: &str) -> Result<Option<Vec<u8>>, StorageError> {
-        let rtxn = self.env.read_txn().map_err(|e| StorageError::Transaction(e.to_string()))?;
+        let rtxn = self
+            .env
+            .read_txn()
+            .map_err(|e| StorageError::Transaction(e.to_string()))?;
         self.metadata
             .get(&rtxn, key)
             .map(|opt| opt.map(|b| b.to_vec()))
@@ -364,7 +394,11 @@ impl<'a> StorageWriteTxn for LmdbWriteTxn<'a> {
             .put(&mut self.txn, metadata_keys::TIP_HASH, hash.as_bytes())
             .map_err(|e| StorageError::Write(e.to_string()))?;
         self.metadata
-            .put(&mut self.txn, metadata_keys::TIP_HEIGHT, &height.to_le_bytes())
+            .put(
+                &mut self.txn,
+                metadata_keys::TIP_HEIGHT,
+                &height.to_le_bytes(),
+            )
             .map_err(|e| StorageError::Write(e.to_string()))
     }
 
@@ -375,7 +409,9 @@ impl<'a> StorageWriteTxn for LmdbWriteTxn<'a> {
     }
 
     fn commit(self) -> Result<(), StorageError> {
-        self.txn.commit().map_err(|e| StorageError::Commit(e.to_string()))
+        self.txn
+            .commit()
+            .map_err(|e| StorageError::Commit(e.to_string()))
     }
 
     fn abort(self) {
@@ -387,7 +423,10 @@ impl StorageWrite for LmdbStorage {
     type WriteTxn<'a> = LmdbWriteTxn<'a>;
 
     fn write_txn(&self) -> Result<Self::WriteTxn<'_>, StorageError> {
-        let txn = self.env.write_txn().map_err(|e| StorageError::Transaction(e.to_string()))?;
+        let txn = self
+            .env
+            .write_txn()
+            .map_err(|e| StorageError::Transaction(e.to_string()))?;
         Ok(LmdbWriteTxn {
             txn,
             blocks: &self.blocks,

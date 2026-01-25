@@ -1,8 +1,8 @@
 //! TxInput type representing a transaction input.
 
 use super::outpoint::OutPoint;
-use super::witness::Witness;
 use super::serialize::{Deserialize, DeserializeError, Serialize};
+use super::witness::Witness;
 
 /// A transaction input, referencing a previous output to spend.
 ///

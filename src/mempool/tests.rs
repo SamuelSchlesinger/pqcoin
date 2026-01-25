@@ -3,15 +3,20 @@
 #[cfg(test)]
 mod tests {
     use crate::blockchain::{
-        create_genesis_block, Address, Block, BlockHeader, Blockchain, OutPoint,
-        Transaction, TxInput, TxOutput, Witness,
+        Address, Block, BlockHeader, Blockchain, OutPoint, Transaction, TxInput, TxOutput, Witness,
+        create_genesis_block,
     };
     use crate::constants::TX_EXPIRY_BLOCKS;
     use crate::crypto::{hash, ml_dsa_87};
     use crate::mempool::{Mempool, MempoolError};
 
     // Helper to create a test blockchain with mature coinbase
-    fn test_blockchain() -> (Blockchain, crate::crypto::PublicKey, crate::crypto::SecretKey, Address) {
+    fn test_blockchain() -> (
+        Blockchain,
+        crate::crypto::PublicKey,
+        crate::crypto::SecretKey,
+        Address,
+    ) {
         let (pk, sk) = ml_dsa_87::keygen();
         let address = Address::from_public_key(&pk);
 
@@ -72,8 +77,7 @@ mod tests {
         let (outpoint, utxo) = utxos
             .into_iter()
             .find(|(_, u)| {
-                !u.is_coinbase
-                    || chain.height() >= u.height + crate::constants::COINBASE_MATURITY
+                !u.is_coinbase || chain.height() >= u.height + crate::constants::COINBASE_MATURITY
             })
             .expect("no spendable UTXO");
 
@@ -142,8 +146,7 @@ mod tests {
         let (outpoint, utxo) = utxos
             .into_iter()
             .find(|(_, u)| {
-                !u.is_coinbase
-                    || chain.height() >= u.height + crate::constants::COINBASE_MATURITY
+                !u.is_coinbase || chain.height() >= u.height + crate::constants::COINBASE_MATURITY
             })
             .expect("no spendable UTXO");
 
@@ -170,7 +173,7 @@ mod tests {
         // Create second transaction spending the same UTXO (different output amount)
         let mut tx2 = Transaction::new(
             vec![TxInput::new(
-                outpoint,  // Same outpoint as tx1!
+                outpoint, // Same outpoint as tx1!
                 Witness::P2PKH {
                     public_key: pk.clone(),
                     signature: ml_dsa_87::sign(&sk, &[0u8; 64]),
@@ -193,7 +196,8 @@ mod tests {
         let result = mempool.add(tx2, &chain, current_height);
         assert!(
             matches!(result, Err(MempoolError::DoubleSpend(id)) if id == tx1_id),
-            "Expected DoubleSpend error with tx1_id, got: {:?}", result
+            "Expected DoubleSpend error with tx1_id, got: {:?}",
+            result
         );
     }
 

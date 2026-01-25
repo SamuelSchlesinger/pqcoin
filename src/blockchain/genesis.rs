@@ -1,10 +1,10 @@
 //! Genesis block creation.
 
-use crate::crypto::Hash;
 use super::address::Address;
 use super::block::Block;
 use super::header::BlockHeader;
 use super::transaction::Transaction;
+use crate::crypto::Hash;
 
 /// Create the pqcoin genesis block.
 ///

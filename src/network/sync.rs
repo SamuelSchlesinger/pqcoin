@@ -7,7 +7,9 @@
 //! - Orphan block handling
 
 use crate::blockchain::{Block, BlockHeader, Blockchain, BlockchainError};
-use crate::constants::{MAX_BLOCKS_IN_FLIGHT, MAX_HEADERS_COUNT, MAX_ORPHAN_BLOCKS, MAX_PENDING_HEADERS};
+use crate::constants::{
+    MAX_BLOCKS_IN_FLIGHT, MAX_HEADERS_COUNT, MAX_ORPHAN_BLOCKS, MAX_PENDING_HEADERS,
+};
 use crate::crypto::Hash;
 use crate::network::message::{InvItem, InvType, Message};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -257,7 +259,10 @@ impl SyncManager {
         }
 
         // Update peer state
-        let peer_state = self.peer_states.entry(peer_id).or_insert_with(PeerSyncState::new);
+        let peer_state = self
+            .peer_states
+            .entry(peer_id)
+            .or_insert_with(PeerSyncState::new);
 
         // Validate header chain
         let mut prev_hash = first.prev_hash;
@@ -352,11 +357,7 @@ impl SyncManager {
     }
 
     /// Process a received block.
-    pub async fn process_block(
-        &mut self,
-        peer_id: u64,
-        block: Block,
-    ) -> Result<bool, SyncError> {
+    pub async fn process_block(&mut self, peer_id: u64, block: Block) -> Result<bool, SyncError> {
         let hash = block.hash();
 
         // Remove from in-flight
@@ -534,7 +535,11 @@ impl SyncManager {
     /// Process an inventory message.
     ///
     /// The `mempool_contains` closure checks if a transaction is already in the mempool.
-    pub async fn process_inv<F>(&mut self, items: &[InvItem], mempool_contains: F) -> Option<Message>
+    pub async fn process_inv<F>(
+        &mut self,
+        items: &[InvItem],
+        mempool_contains: F,
+    ) -> Option<Message>
     where
         F: Fn(&Hash) -> bool,
     {
@@ -568,11 +573,7 @@ impl SyncManager {
     }
 
     /// Respond to a GetHeaders request.
-    pub async fn respond_to_get_headers(
-        &self,
-        locator: &[Hash],
-        stop: &Hash,
-    ) -> Message {
+    pub async fn respond_to_get_headers(&self, locator: &[Hash], stop: &Hash) -> Message {
         let blockchain = self.blockchain.read().await;
         let mut headers = Vec::new();
 
@@ -605,11 +606,7 @@ impl SyncManager {
     /// Respond to a GetData request.
     ///
     /// The `mempool_get` closure retrieves a transaction from the mempool by hash.
-    pub async fn respond_to_get_data<F>(
-        &self,
-        items: &[InvItem],
-        mempool_get: F,
-    ) -> Vec<Message>
+    pub async fn respond_to_get_data<F>(&self, items: &[InvItem], mempool_get: F) -> Vec<Message>
     where
         F: Fn(&Hash) -> Option<crate::blockchain::Transaction>,
     {
@@ -657,7 +654,7 @@ pub enum SyncError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::blockchain::{create_genesis_block, Address};
+    use crate::blockchain::{Address, create_genesis_block};
     use crate::crypto::ml_dsa_87;
 
     fn create_test_blockchain() -> Arc<RwLock<Blockchain>> {

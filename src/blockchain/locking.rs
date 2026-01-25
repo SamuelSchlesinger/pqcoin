@@ -1,12 +1,12 @@
 //! LockingCondition type specifying spending requirements for outputs.
 
-use crate::constants::MAX_MULTISIG_KEYS;
-use crate::crypto::PublicKey;
 use super::address::Address;
 use super::serialize::{
-    Deserialize, DeserializeError, Serialize,
-    read_bytes, read_u8, read_var_int, write_bytes, write_u8, write_var_int,
+    Deserialize, DeserializeError, Serialize, read_bytes, read_u8, read_var_int, write_bytes,
+    write_u8, write_var_int,
 };
+use crate::constants::MAX_MULTISIG_KEYS;
+use crate::crypto::PublicKey;
 
 /// ML-DSA-87 public key size in bytes.
 const PQ_PUBLIC_KEY_SIZE: usize = 2592;
@@ -66,21 +66,25 @@ impl LockingCondition {
     /// Includes: OutPoint (68 bytes) + Witness data (varies by condition type)
     pub fn estimated_spend_size(&self) -> usize {
         const OUTPOINT_SIZE: usize = 64 + 4; // txid + index
-        const VARINT_OVERHEAD: usize = 4;    // conservative estimate for length prefixes
+        const VARINT_OVERHEAD: usize = 4; // conservative estimate for length prefixes
 
         match self {
             LockingCondition::P2PKH(_) => {
                 // OutPoint + tag(1) + pubkey + signature + varint overhead
                 OUTPOINT_SIZE + 1 + PQ_PUBLIC_KEY_SIZE + PQ_SIGNATURE_SIZE + VARINT_OVERHEAD
             }
-            LockingCondition::Multisig { threshold, public_keys } => {
+            LockingCondition::Multisig {
+                threshold,
+                public_keys,
+            } => {
                 // OutPoint + tag(1) + all pubkeys + threshold signatures + varint overhead
                 let num_keys = public_keys.len();
                 let num_sigs = *threshold as usize;
-                OUTPOINT_SIZE + 1
+                OUTPOINT_SIZE
+                    + 1
                     + (num_keys * PQ_PUBLIC_KEY_SIZE)
                     + (num_sigs * PQ_SIGNATURE_SIZE)
-                    + VARINT_OVERHEAD * 2  // for key count and sig count
+                    + VARINT_OVERHEAD * 2 // for key count and sig count
             }
         }
     }
@@ -131,12 +135,19 @@ impl Deserialize for LockingCondition {
                 let mut data = data;
                 for _ in 0..num_keys {
                     let (pk_bytes, rest) = read_bytes(data)?;
-                    let pk = PublicKey::from_bytes(&pk_bytes)
-                        .ok_or_else(|| DeserializeError::InvalidData("invalid public key".into()))?;
+                    let pk = PublicKey::from_bytes(&pk_bytes).ok_or_else(|| {
+                        DeserializeError::InvalidData("invalid public key".into())
+                    })?;
                     public_keys.push(pk);
                     data = rest;
                 }
-                Ok((LockingCondition::Multisig { threshold, public_keys }, data))
+                Ok((
+                    LockingCondition::Multisig {
+                        threshold,
+                        public_keys,
+                    },
+                    data,
+                ))
             }
             _ => Err(DeserializeError::InvalidData(format!(
                 "unknown locking condition type: {}",

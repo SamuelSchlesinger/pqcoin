@@ -3,8 +3,8 @@
 use crate::blockchain::{Blockchain, LockingCondition, Transaction, TxOutput, Witness};
 use crate::crypto::{hash, ml_dsa_87};
 
-use super::error::MempoolError;
 use super::Mempool;
+use super::error::MempoolError;
 
 /// Validate a transaction for mempool inclusion.
 pub(crate) fn validate_mempool_tx(
@@ -56,7 +56,13 @@ pub(crate) fn validate_witness(
     input_index: usize,
 ) -> bool {
     match (&output.condition, witness) {
-        (LockingCondition::P2PKH(addr), Witness::P2PKH { public_key, signature }) => {
+        (
+            LockingCondition::P2PKH(addr),
+            Witness::P2PKH {
+                public_key,
+                signature,
+            },
+        ) => {
             // Check public key hashes to address
             let pk_hash = hash(public_key.as_ref());
             if pk_hash != *addr.as_hash() {
@@ -70,7 +76,10 @@ pub(crate) fn validate_witness(
             ml_dsa_87::verify(public_key, message.as_bytes(), signature)
         }
         (
-            LockingCondition::Multisig { threshold, public_keys },
+            LockingCondition::Multisig {
+                threshold,
+                public_keys,
+            },
             Witness::Multisig {
                 public_keys: witness_keys,
                 signatures,

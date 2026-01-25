@@ -1,11 +1,11 @@
 //! BlockHeader type containing block metadata and proof-of-work.
 
+use super::serialize::{
+    Deserialize, DeserializeError, Serialize, read_fixed_bytes, read_u32, read_u64, write_u32,
+    write_u64,
+};
 use crate::constants::DIFFICULTY_COEFFICIENT_MASK;
 use crate::crypto::{self, Hash};
-use super::serialize::{
-    Deserialize, DeserializeError, Serialize,
-    read_fixed_bytes, read_u32, read_u64, write_u32, write_u64,
-};
 
 /// The header of a block, containing metadata and proof-of-work.
 ///
@@ -177,10 +177,19 @@ impl std::fmt::Debug for BlockHeader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BlockHeader")
             .field("version", &self.version)
-            .field("prev_hash", &format!("{}...", &self.prev_hash.to_hex()[..16]))
-            .field("merkle_root", &format!("{}...", &self.merkle_root.to_hex()[..16]))
+            .field(
+                "prev_hash",
+                &format!("{}...", &self.prev_hash.to_hex()[..16]),
+            )
+            .field(
+                "merkle_root",
+                &format!("{}...", &self.merkle_root.to_hex()[..16]),
+            )
             .field("timestamp", &self.timestamp)
-            .field("difficulty_bits", &format!("0x{:08x}", self.difficulty_bits))
+            .field(
+                "difficulty_bits",
+                &format!("0x{:08x}", self.difficulty_bits),
+            )
             .field("nonce", &self.nonce)
             .finish()
     }

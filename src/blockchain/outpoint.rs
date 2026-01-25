@@ -1,10 +1,9 @@
 //! OutPoint type representing a reference to a transaction output.
 
-use crate::crypto::Hash;
 use super::serialize::{
-    Deserialize, DeserializeError, Serialize,
-    read_fixed_bytes, read_u32, write_u32,
+    Deserialize, DeserializeError, Serialize, read_fixed_bytes, read_u32, write_u32,
 };
+use crate::crypto::Hash;
 
 /// A reference to a specific output of a previous transaction.
 ///
@@ -49,7 +48,13 @@ impl OutPoint {
 
 impl std::fmt::Debug for OutPoint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "OutPoint({}:{}, {})", &self.txid.to_hex()[..8], &self.txid.to_hex()[120..], self.index)
+        write!(
+            f,
+            "OutPoint({}:{}, {})",
+            &self.txid.to_hex()[..8],
+            &self.txid.to_hex()[120..],
+            self.index
+        )
     }
 }
 

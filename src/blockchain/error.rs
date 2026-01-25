@@ -1,8 +1,8 @@
 //! Error types for blockchain operations.
 
+use super::outpoint::OutPoint;
 use crate::crypto::Hash;
 use crate::storage::StorageError;
-use super::outpoint::OutPoint;
 
 /// Errors that can occur during blockchain operations.
 #[derive(Debug)]
@@ -46,9 +46,17 @@ pub enum BlockchainError {
     /// Transaction has too many outputs.
     TooManyOutputs(usize),
     /// Transaction output is below the dust limit.
-    DustOutput { index: usize, amount: u64, limit: u64 },
+    DustOutput {
+        index: usize,
+        amount: u64,
+        limit: u64,
+    },
     /// Block hash doesn't match the checkpoint at this height.
-    CheckpointMismatch { height: u64, expected: Hash, got: Hash },
+    CheckpointMismatch {
+        height: u64,
+        expected: Hash,
+        got: Hash,
+    },
     /// Storage error.
     Storage(StorageError),
 }
@@ -75,19 +83,41 @@ impl std::fmt::Display for BlockchainError {
             BlockchainError::InvalidDifficulty => write!(f, "invalid difficulty"),
             BlockchainError::FeeOverflow => write!(f, "fee calculation overflow"),
             BlockchainError::BlockTooLarge => write!(f, "block exceeds maximum size"),
-            BlockchainError::ImmatureCoinbase { outpoint, current_height, maturity_height } => {
-                write!(f, "immature coinbase: {:?} (current height {}, matures at {})",
-                    outpoint, current_height, maturity_height)
+            BlockchainError::ImmatureCoinbase {
+                outpoint,
+                current_height,
+                maturity_height,
+            } => {
+                write!(
+                    f,
+                    "immature coinbase: {:?} (current height {}, matures at {})",
+                    outpoint, current_height, maturity_height
+                )
             }
             BlockchainError::ReorgTooDeep(depth) => write!(f, "reorg too deep: {} blocks", depth),
             BlockchainError::TooManyInputs(count) => write!(f, "too many inputs: {}", count),
             BlockchainError::TooManyOutputs(count) => write!(f, "too many outputs: {}", count),
-            BlockchainError::DustOutput { index, amount, limit } => {
-                write!(f, "output {} is dust: {} below limit {}", index, amount, limit)
+            BlockchainError::DustOutput {
+                index,
+                amount,
+                limit,
+            } => {
+                write!(
+                    f,
+                    "output {} is dust: {} below limit {}",
+                    index, amount, limit
+                )
             }
-            BlockchainError::CheckpointMismatch { height, expected, got } => {
-                write!(f, "checkpoint mismatch at height {}: expected {}, got {}",
-                    height, expected, got)
+            BlockchainError::CheckpointMismatch {
+                height,
+                expected,
+                got,
+            } => {
+                write!(
+                    f,
+                    "checkpoint mismatch at height {}: expected {}, got {}",
+                    height, expected, got
+                )
             }
             BlockchainError::Storage(e) => write!(f, "storage error: {}", e),
         }

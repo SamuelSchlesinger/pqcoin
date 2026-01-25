@@ -1,7 +1,7 @@
 //! Checkpoint validation for preventing long-range attacks.
 
-use crate::crypto::Hash;
 use super::error::BlockchainError;
+use crate::crypto::Hash;
 
 /// Hardcoded checkpoints for known-good blocks.
 /// Format: (height, block_hash_hex)

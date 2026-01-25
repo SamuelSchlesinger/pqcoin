@@ -25,11 +25,11 @@ use handlers::{broadcast, handle_peer_message, send_to_peer};
 use state::{NetworkState, PeerCommand, PeerInfo, PeerMessage};
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tokio::time::interval;
 
 /// Network configuration.
@@ -468,7 +468,10 @@ impl NetworkService {
         );
 
         // Emit event
-        let _ = self.event_tx.send(NetworkEvent::NewBlock(block.clone())).await;
+        let _ = self
+            .event_tx
+            .send(NetworkEvent::NewBlock(block.clone()))
+            .await;
 
         // Broadcast inventory to all peers
         self.broadcast(Message::Inv {
@@ -478,7 +481,10 @@ impl NetworkService {
     }
 
     /// Submit a local transaction to the mempool and broadcast it.
-    pub async fn submit_transaction(&self, tx: Transaction) -> Result<(), crate::mempool::MempoolError> {
+    pub async fn submit_transaction(
+        &self,
+        tx: Transaction,
+    ) -> Result<(), crate::mempool::MempoolError> {
         let txid = tx.txid();
 
         // Add to mempool
@@ -510,7 +516,10 @@ impl NetworkService {
     }
 
     /// Submit a mined block to the blockchain and broadcast it.
-    pub async fn submit_block(&self, block: Block) -> Result<(), crate::blockchain::BlockchainError> {
+    pub async fn submit_block(
+        &self,
+        block: Block,
+    ) -> Result<(), crate::blockchain::BlockchainError> {
         let hash = block.hash();
 
         // IMPORTANT: Hold both locks together to prevent race conditions
@@ -533,7 +542,10 @@ impl NetworkService {
         );
 
         // Emit event
-        let _ = self.event_tx.send(NetworkEvent::NewBlock(block.clone())).await;
+        let _ = self
+            .event_tx
+            .send(NetworkEvent::NewBlock(block.clone()))
+            .await;
 
         // Broadcast to peers
         self.broadcast(Message::Inv {
@@ -639,7 +651,7 @@ impl NetworkService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::blockchain::{create_genesis_block, Address};
+    use crate::blockchain::{Address, create_genesis_block};
     use crate::crypto::ml_dsa_87;
 
     fn create_test_blockchain() -> Arc<RwLock<Blockchain>> {

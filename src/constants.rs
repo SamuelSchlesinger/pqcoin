@@ -136,7 +136,7 @@ pub const MIN_RELAY_FEE: u64 = 1000;
 /// An output is dust if spending it would cost more than its value at this rate.
 /// Set to 1/10th of MIN_RELAY_FEE to allow small payments while preventing
 /// truly uneconomical outputs. Dynamic dust = (spend_size * DUST_FEE_RATE) / 1000.
-pub const DUST_FEE_RATE: u64 = MIN_RELAY_FEE / 10;  // 100 quanta per KB
+pub const DUST_FEE_RATE: u64 = MIN_RELAY_FEE / 10; // 100 quanta per KB
 
 /// Number of blocks after which an unconfirmed transaction expires (~72 hours at 10 min blocks).
 /// Prevents indefinite transaction hanging and allows fee bumping after expiry.

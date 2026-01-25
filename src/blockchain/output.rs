@@ -1,12 +1,9 @@
 //! TxOutput type representing a transaction output.
 
-use crate::crypto::PublicKey;
 use super::address::Address;
 use super::locking::LockingCondition;
-use super::serialize::{
-    Deserialize, DeserializeError, Serialize,
-    read_u64, write_u64,
-};
+use super::serialize::{Deserialize, DeserializeError, Serialize, read_u64, write_u64};
+use crate::crypto::PublicKey;
 
 /// A transaction output, representing spendable value.
 ///

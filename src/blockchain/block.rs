@@ -1,13 +1,10 @@
 //! Block type containing header and transactions.
 
+use super::header::BlockHeader;
+use super::serialize::{Deserialize, DeserializeError, Serialize, read_var_int, write_var_int};
+use super::transaction::Transaction;
 use crate::constants::MAX_BLOCK_TXS;
 use crate::crypto::{self, Hash};
-use super::header::BlockHeader;
-use super::transaction::Transaction;
-use super::serialize::{
-    Deserialize, DeserializeError, Serialize,
-    read_var_int, write_var_int,
-};
 
 /// A complete block containing a header and transactions.
 ///
@@ -38,7 +35,10 @@ pub struct Block {
 impl Block {
     /// Create a new block with the given header and transactions.
     pub fn new(header: BlockHeader, transactions: Vec<Transaction>) -> Self {
-        Self { header, transactions }
+        Self {
+            header,
+            transactions,
+        }
     }
 
     /// Compute the merkle root of the transactions.
@@ -122,6 +122,12 @@ impl Deserialize for Block {
             transactions.push(tx);
             data = rest;
         }
-        Ok((Block { header, transactions }, data))
+        Ok((
+            Block {
+                header,
+                transactions,
+            },
+            data,
+        ))
     }
 }

@@ -31,7 +31,11 @@ pub struct Wallet {
 
 impl Wallet {
     /// Create a new wallet with a freshly generated keypair.
-    pub fn create(name: &str, password: &str, path: std::path::PathBuf) -> Result<Self, WalletError> {
+    pub fn create(
+        name: &str,
+        password: &str,
+        path: std::path::PathBuf,
+    ) -> Result<Self, WalletError> {
         let keypair = KeyPair::generate();
         let address = keypair.address();
 
