@@ -440,8 +440,8 @@ mod tests {
     #[test]
     fn hash_display_format() {
         let h = hash(b"");
-        let display = format!("{}", h);
-        let debug = format!("{:?}", h);
+        let display = format!("{h}");
+        let debug = format!("{h:?}");
 
         // Display should be just the hex
         assert_eq!(display.len(), 128); // 64 bytes = 128 hex chars

@@ -128,11 +128,11 @@ impl TransactionBuilder {
                 TxInput::new(
                     utxo.outpoint,
                     Witness::P2PKH {
-                        public_key: keypair.public_key().clone(),
-                        signature: crate::crypto::ml_dsa_87::sign(
+                        public_key: Box::new(keypair.public_key().clone()),
+                        signature: Box::new(crate::crypto::ml_dsa_87::sign(
                             keypair.secret_key(),
                             &[0u8; 64], // Placeholder
-                        ),
+                        )),
                     },
                 )
             })
@@ -163,8 +163,8 @@ impl TransactionBuilder {
                 crate::crypto::ml_dsa_87::sign(keypair.secret_key(), message_hash.as_bytes());
 
             tx.inputs[i].witness = Witness::P2PKH {
-                public_key: keypair.public_key().clone(),
-                signature,
+                public_key: Box::new(keypair.public_key().clone()),
+                signature: Box::new(signature),
             };
         }
 

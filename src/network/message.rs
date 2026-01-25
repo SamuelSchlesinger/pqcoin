@@ -96,7 +96,7 @@ pub const MAX_LOCATOR_COUNT: usize = 101;
 /// Maximum length for variable-length strings in messages (1 MB).
 /// This provides explicit bounds for defense in depth, though strings
 /// are also bounded by the overall message size limit.
-pub const MAX_STRING_SIZE: usize = 1 * 1024 * 1024;
+pub const MAX_STRING_SIZE: usize = 1024 * 1024;
 
 /// Errors that can occur during message handling.
 #[derive(Debug, Error)]
@@ -141,8 +141,7 @@ impl Deserialize for InvType {
             2 => InvType::Block,
             n => {
                 return Err(DeserializeError::InvalidData(format!(
-                    "unknown inv type: {}",
-                    n
+                    "unknown inv type: {n}"
                 )));
             }
         };
@@ -805,8 +804,7 @@ fn deserialize_socket_addr(data: &[u8]) -> Result<(SocketAddr, &[u8]), Deseriali
             Ok((SocketAddr::from((ip, port)), &data[19..]))
         }
         n => Err(DeserializeError::InvalidData(format!(
-            "unknown address type: {}",
-            n
+            "unknown address type: {n}"
         ))),
     }
 }

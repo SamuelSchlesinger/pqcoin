@@ -36,7 +36,7 @@ fn test_varint_roundtrip() {
         let mut buf = Vec::new();
         write_var_int(&mut buf, value);
         let (decoded, remaining) = read_var_int(&buf).unwrap();
-        assert_eq!(decoded, value, "varint roundtrip failed for {}", value);
+        assert_eq!(decoded, value, "varint roundtrip failed for {value}");
         assert!(remaining.is_empty());
     }
 }
@@ -82,8 +82,8 @@ fn test_witness_p2pkh_serialization() {
     let sig = crypto::ml_dsa_87::sign(&sk, message);
 
     let witness = Witness::P2PKH {
-        public_key: pk,
-        signature: sig,
+        public_key: Box::new(pk),
+        signature: Box::new(sig),
     };
 
     let bytes = witness.to_bytes();
@@ -382,7 +382,7 @@ fn test_difficulty_adjustment_scaling() {
     // difficulty_bits = (exponent << 24) | coefficient
     // With exponent=32, coefficient=0x100000 (about 1M)
     let bits: u32 = (32 << 24) | 0x100000;
-    let exponent = bits >> 24;
+    let _exponent = bits >> 24;
     let coefficient = (bits & 0x00FFFFFF) as u64;
 
     // Scaling by 4x (max adjustment)
@@ -554,8 +554,8 @@ fn create_spending_tx(
     let inputs = vec![TxInput::new(
         outpoint,
         Witness::P2PKH {
-            public_key: from_pk.clone(),
-            signature: crypto::ml_dsa_87::sign(from_sk, b"placeholder"),
+            public_key: Box::new(from_pk.clone()),
+            signature: Box::new(crypto::ml_dsa_87::sign(from_sk, b"placeholder")),
         },
     )];
     let outputs = vec![TxOutput::p2pkh(utxo.output.amount, to_address)];
@@ -566,8 +566,8 @@ fn create_spending_tx(
     let message = crypto::hash(&signing_data);
     let signature = crypto::ml_dsa_87::sign(from_sk, message.as_bytes());
     tx.inputs[0].witness = Witness::P2PKH {
-        public_key: from_pk.clone(),
-        signature,
+        public_key: Box::new(from_pk.clone()),
+        signature: Box::new(signature),
     };
 
     tx
@@ -618,8 +618,8 @@ fn test_invalid_signature_rejected() {
     let inputs = vec![TxInput::new(
         *outpoint,
         Witness::P2PKH {
-            public_key: pk.clone(),
-            signature: crypto::ml_dsa_87::sign(&other_sk, b"wrong key"),
+            public_key: Box::new(pk.clone()),
+            signature: Box::new(crypto::ml_dsa_87::sign(&other_sk, b"wrong key")),
         },
     )];
     let outputs = vec![TxOutput::p2pkh(utxo.output.amount, other_address)];
@@ -630,8 +630,8 @@ fn test_invalid_signature_rejected() {
     let message = crypto::hash(&signing_data);
     let wrong_signature = crypto::ml_dsa_87::sign(&other_sk, message.as_bytes());
     tx.inputs[0].witness = Witness::P2PKH {
-        public_key: pk.clone(),
-        signature: wrong_signature,
+        public_key: Box::new(pk.clone()),
+        signature: Box::new(wrong_signature),
     };
 
     let block = create_block_with_txs(&chain, vec![tx], other_address);
@@ -651,8 +651,8 @@ fn test_wrong_public_key_rejected() {
     let inputs = vec![TxInput::new(
         outpoint,
         Witness::P2PKH {
-            public_key: other_pk.clone(), // Wrong public key
-            signature: crypto::ml_dsa_87::sign(&sk, b"placeholder"),
+            public_key: Box::new(other_pk.clone()), // Wrong public key
+            signature: Box::new(crypto::ml_dsa_87::sign(&sk, b"placeholder")),
         },
     )];
     let outputs = vec![TxOutput::p2pkh(utxo.output.amount, other_address)];
@@ -663,8 +663,8 @@ fn test_wrong_public_key_rejected() {
     let message = crypto::hash(&signing_data);
     let signature = crypto::ml_dsa_87::sign(&sk, message.as_bytes());
     tx.inputs[0].witness = Witness::P2PKH {
-        public_key: other_pk.clone(), // Still wrong
-        signature,
+        public_key: Box::new(other_pk.clone()), // Still wrong
+        signature: Box::new(signature),
     };
 
     let block = create_block_with_txs(&chain, vec![tx], other_address);
@@ -768,7 +768,7 @@ fn test_insufficient_multisig_signatures_rejected() {
 
 #[test]
 fn test_double_spend_within_block_detected() {
-    let (mut chain, pk, sk, address) = test_blockchain();
+    let (mut chain, pk, sk, _address) = test_blockchain();
     let (recipient_pk, _) = test_keypair();
     let recipient_address = Address::from_public_key(&recipient_pk);
 
@@ -802,8 +802,8 @@ fn test_spending_immature_coinbase_rejected() {
     let inputs = vec![TxInput::new(
         outpoint,
         Witness::P2PKH {
-            public_key: pk.clone(),
-            signature: crypto::ml_dsa_87::sign(&sk, b"placeholder"),
+            public_key: Box::new(pk.clone()),
+            signature: Box::new(crypto::ml_dsa_87::sign(&sk, b"placeholder")),
         },
     )];
     let outputs = vec![TxOutput::p2pkh(new_coinbase_amount, recipient_address)];
@@ -814,8 +814,8 @@ fn test_spending_immature_coinbase_rejected() {
     let message = crypto::hash(&signing_data);
     let signature = crypto::ml_dsa_87::sign(&sk, message.as_bytes());
     tx.inputs[0].witness = Witness::P2PKH {
-        public_key: pk.clone(),
-        signature,
+        public_key: Box::new(pk.clone()),
+        signature: Box::new(signature),
     };
 
     // This should fail because the coinbase is immature
@@ -839,8 +839,8 @@ fn test_insufficient_inputs_rejected() {
     let inputs = vec![TxInput::new(
         outpoint,
         Witness::P2PKH {
-            public_key: pk.clone(),
-            signature: crypto::ml_dsa_87::sign(&sk, b"placeholder"),
+            public_key: Box::new(pk.clone()),
+            signature: Box::new(crypto::ml_dsa_87::sign(&sk, b"placeholder")),
         },
     )];
     // Output more than we have
@@ -851,8 +851,8 @@ fn test_insufficient_inputs_rejected() {
     let message = crypto::hash(&signing_data);
     let signature = crypto::ml_dsa_87::sign(&sk, message.as_bytes());
     tx.inputs[0].witness = Witness::P2PKH {
-        public_key: pk.clone(),
-        signature,
+        public_key: Box::new(pk.clone()),
+        signature: Box::new(signature),
     };
 
     let block = create_block_with_txs(&chain, vec![tx], recipient_address);
@@ -878,8 +878,8 @@ fn test_dust_output_rejected() {
     let inputs = vec![TxInput::new(
         outpoint,
         Witness::P2PKH {
-            public_key: pk.clone(),
-            signature: crypto::ml_dsa_87::sign(&sk, b"placeholder"),
+            public_key: Box::new(pk.clone()),
+            signature: Box::new(crypto::ml_dsa_87::sign(&sk, b"placeholder")),
         },
     )];
 
@@ -896,8 +896,8 @@ fn test_dust_output_rejected() {
     let message = crypto::hash(&signing_data);
     let signature = crypto::ml_dsa_87::sign(&sk, message.as_bytes());
     tx.inputs[0].witness = Witness::P2PKH {
-        public_key: pk.clone(),
-        signature,
+        public_key: Box::new(pk.clone()),
+        signature: Box::new(signature),
     };
 
     let block = create_block_with_txs(&chain, vec![tx], recipient_address);
@@ -905,10 +905,7 @@ fn test_dust_output_rejected() {
     assert!(
         matches!(result, Err(BlockchainError::DustOutput { index: 0, amount, limit })
             if amount == dust_amount && limit == expected_dust_limit),
-        "Expected DustOutput error with amount {} and limit {}, got {:?}",
-        dust_amount,
-        expected_dust_limit,
-        result
+        "Expected DustOutput error with amount {dust_amount} and limit {expected_dust_limit}, got {result:?}"
     );
 }
 
@@ -931,9 +928,7 @@ fn test_dust_limit_scales_with_output_type() {
     // Multisig requires more data to spend (3 pubkeys + 2 sigs vs 1 pubkey + 1 sig)
     assert!(
         multisig_limit > p2pkh_limit,
-        "Multisig dust limit ({}) should be greater than P2PKH ({})",
-        multisig_limit,
-        p2pkh_limit
+        "Multisig dust limit ({multisig_limit}) should be greater than P2PKH ({p2pkh_limit})"
     );
 
     // Verify reasonable values (at DUST_FEE_RATE = 100 quanta/KB)
@@ -941,13 +936,11 @@ fn test_dust_limit_scales_with_output_type() {
     // 2-of-3 Multisig spend size: ~17,028 bytes -> dust ~1,702 quanta
     assert!(
         p2pkh_limit > 500 && p2pkh_limit < 1500,
-        "P2PKH dust limit {} outside expected range",
-        p2pkh_limit
+        "P2PKH dust limit {p2pkh_limit} outside expected range"
     );
     assert!(
         multisig_limit > 1000 && multisig_limit < 3000,
-        "Multisig dust limit {} outside expected range",
-        multisig_limit
+        "Multisig dust limit {multisig_limit} outside expected range"
     );
 }
 

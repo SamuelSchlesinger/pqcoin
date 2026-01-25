@@ -42,13 +42,13 @@ impl WalletFile {
         // Create parent directory if it doesn't exist
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|e| WalletError::Io(format!("failed to create directory: {}", e)))?;
+                .map_err(|e| WalletError::Io(format!("failed to create directory: {e}")))?;
         }
 
         let json = serde_json::to_string_pretty(self)
-            .map_err(|e| WalletError::InvalidFormat(format!("serialization failed: {}", e)))?;
+            .map_err(|e| WalletError::InvalidFormat(format!("serialization failed: {e}")))?;
 
-        std::fs::write(path, json).map_err(|e| WalletError::Io(format!("write failed: {}", e)))?;
+        std::fs::write(path, json).map_err(|e| WalletError::Io(format!("write failed: {e}")))?;
 
         Ok(())
     }
@@ -56,10 +56,10 @@ impl WalletFile {
     /// Load a wallet file from disk.
     pub fn load(path: &Path) -> Result<Self, WalletError> {
         let json = std::fs::read_to_string(path)
-            .map_err(|e| WalletError::Io(format!("read failed: {}", e)))?;
+            .map_err(|e| WalletError::Io(format!("read failed: {e}")))?;
 
         let wallet: Self = serde_json::from_str(&json)
-            .map_err(|e| WalletError::InvalidFormat(format!("parse failed: {}", e)))?;
+            .map_err(|e| WalletError::InvalidFormat(format!("parse failed: {e}")))?;
 
         if wallet.version != WALLET_VERSION {
             return Err(WalletError::InvalidFormat(format!(
@@ -76,7 +76,7 @@ impl WalletFile {
         let secret_key = self.encrypted_key.decrypt(password)?;
 
         let public_key_bytes = hex::decode(&self.public_key)
-            .map_err(|e| WalletError::InvalidFormat(format!("invalid public key hex: {}", e)))?;
+            .map_err(|e| WalletError::InvalidFormat(format!("invalid public key hex: {e}")))?;
 
         let public_key = crate::crypto::PublicKey::from_bytes(&public_key_bytes)
             .ok_or_else(|| WalletError::InvalidFormat("invalid public key".into()))?;
@@ -112,7 +112,7 @@ impl WalletStorage {
 
     /// Get the path for a named wallet.
     pub fn wallet_path(&self, name: &str) -> std::path::PathBuf {
-        self.base_dir.join(format!("{}.wallet.json", name))
+        self.base_dir.join(format!("{name}.wallet.json"))
     }
 
     /// List all wallet files in the storage directory.
@@ -122,12 +122,11 @@ impl WalletStorage {
         }
 
         let entries = std::fs::read_dir(&self.base_dir)
-            .map_err(|e| WalletError::Io(format!("failed to read directory: {}", e)))?;
+            .map_err(|e| WalletError::Io(format!("failed to read directory: {e}")))?;
 
         let mut wallets = Vec::new();
         for entry in entries {
-            let entry =
-                entry.map_err(|e| WalletError::Io(format!("failed to read entry: {}", e)))?;
+            let entry = entry.map_err(|e| WalletError::Io(format!("failed to read entry: {e}")))?;
             let path = entry.path();
 
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {

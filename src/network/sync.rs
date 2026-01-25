@@ -52,6 +52,7 @@ struct PeerSyncState {
     /// Height of the tip this peer reported.
     tip_height: u64,
     /// Are we actively syncing from this peer?
+    #[allow(dead_code)] // Reserved for future sync improvements
     syncing_from: bool,
 }
 
@@ -301,7 +302,7 @@ impl SyncManager {
                 break;
             }
             let header_hash = header.hash();
-            self.downloaded_headers.insert(header_hash, header.clone());
+            self.downloaded_headers.insert(header_hash, header);
             self.pending_headers.push_back(header);
         }
 

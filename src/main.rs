@@ -101,7 +101,7 @@ async fn main() {
     let mut config = match Config::load(cli.config.as_ref()) {
         Ok(config) => config,
         Err(e) => {
-            eprintln!("Error loading configuration: {}", e);
+            eprintln!("Error loading configuration: {e}");
             std::process::exit(1);
         }
     };

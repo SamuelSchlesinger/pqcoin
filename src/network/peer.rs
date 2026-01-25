@@ -200,6 +200,7 @@ impl Peer {
     /// 2. Send Version
     /// 3. Receive Verack
     /// 4. Send Verack
+    ///
     /// Build our version message.
     fn build_version_message(&self) -> Message {
         let timestamp = SystemTime::now()

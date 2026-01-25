@@ -70,7 +70,7 @@ enum Commands {
 }
 
 fn read_password(prompt: &str) -> io::Result<String> {
-    print!("{}", prompt);
+    print!("{prompt}");
     io::stdout().flush()?;
 
     let mut password = String::new();
@@ -101,12 +101,12 @@ async fn rpc_call<T: serde::de::DeserializeOwned>(
         .json(&request)
         .send()
         .await
-        .map_err(|e| WalletError::Rpc(format!("request failed: {}", e)))?;
+        .map_err(|e| WalletError::Rpc(format!("request failed: {e}")))?;
 
     let body: serde_json::Value = response
         .json()
         .await
-        .map_err(|e| WalletError::Rpc(format!("parse failed: {}", e)))?;
+        .map_err(|e| WalletError::Rpc(format!("parse failed: {e}")))?;
 
     if let Some(error) = body.get("error") {
         if !error.is_null() {
@@ -125,7 +125,7 @@ async fn rpc_call<T: serde::de::DeserializeOwned>(
         .ok_or_else(|| WalletError::Rpc("no result in response".into()))?;
 
     serde_json::from_value(result.clone())
-        .map_err(|e| WalletError::Rpc(format!("result parse failed: {}", e)))
+        .map_err(|e| WalletError::Rpc(format!("result parse failed: {e}")))
 }
 
 #[derive(serde::Deserialize)]
@@ -196,10 +196,10 @@ async fn cmd_balance(cli: &Cli) -> Result<(), WalletError> {
     match rpc_call::<u64>(&cli.rpc, "getbalance", serde_json::json!([address_hex])).await {
         Ok(balance) => {
             let coins = balance as f64 / 1_000_000.0;
-            println!("Balance: {} PQC ({} quanta)", coins, balance);
+            println!("Balance: {coins} PQC ({balance} quanta)");
         }
         Err(e) => {
-            eprintln!("RPC error: {}", e);
+            eprintln!("RPC error: {e}");
             eprintln!("Make sure the pqcoin node is running with --rpc enabled");
         }
     }
@@ -283,7 +283,7 @@ async fn cmd_send(cli: &Cli, to: &str, amount: u64, fee: u64) -> Result<(), Wall
         rpc_call(&cli.rpc, "sendrawtransaction", serde_json::json!([tx_hex])).await?;
 
     println!("Transaction sent!");
-    println!("TXID: {}", txid);
+    println!("TXID: {txid}");
 
     Ok(())
 }
@@ -321,7 +321,7 @@ async fn cmd_list(_cli: &Cli) -> Result<(), WalletError> {
     } else {
         println!("Available wallets:");
         for name in wallets {
-            println!("  - {}", name);
+            println!("  - {name}");
         }
     }
 
@@ -343,7 +343,7 @@ async fn main() {
     };
 
     if let Err(e) = result {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
         std::process::exit(1);
     }
 }

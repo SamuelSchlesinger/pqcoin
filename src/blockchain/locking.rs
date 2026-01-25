@@ -150,8 +150,7 @@ impl Deserialize for LockingCondition {
                 ))
             }
             _ => Err(DeserializeError::InvalidData(format!(
-                "unknown locking condition type: {}",
-                tag
+                "unknown locking condition type: {tag}"
             ))),
         }
     }

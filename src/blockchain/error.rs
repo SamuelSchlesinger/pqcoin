@@ -54,8 +54,8 @@ pub enum BlockchainError {
     /// Block hash doesn't match the checkpoint at this height.
     CheckpointMismatch {
         height: u64,
-        expected: Hash,
-        got: Hash,
+        expected: Box<Hash>,
+        got: Box<Hash>,
     },
     /// Storage error.
     Storage(StorageError),
@@ -75,10 +75,10 @@ impl std::fmt::Display for BlockchainError {
             BlockchainError::InvalidMerkleRoot => write!(f, "invalid merkle root"),
             BlockchainError::EmptyBlock => write!(f, "block has no transactions"),
             BlockchainError::InvalidCoinbase => write!(f, "invalid coinbase transaction"),
-            BlockchainError::MissingInput(op) => write!(f, "missing input: {:?}", op),
+            BlockchainError::MissingInput(op) => write!(f, "missing input: {op:?}"),
             BlockchainError::InvalidWitness => write!(f, "invalid witness"),
             BlockchainError::InsufficientInputs => write!(f, "insufficient inputs"),
-            BlockchainError::DoubleSpend(op) => write!(f, "double spend: {:?}", op),
+            BlockchainError::DoubleSpend(op) => write!(f, "double spend: {op:?}"),
             BlockchainError::InvalidTimestamp => write!(f, "invalid timestamp"),
             BlockchainError::InvalidDifficulty => write!(f, "invalid difficulty"),
             BlockchainError::FeeOverflow => write!(f, "fee calculation overflow"),
@@ -90,23 +90,18 @@ impl std::fmt::Display for BlockchainError {
             } => {
                 write!(
                     f,
-                    "immature coinbase: {:?} (current height {}, matures at {})",
-                    outpoint, current_height, maturity_height
+                    "immature coinbase: {outpoint:?} (current height {current_height}, matures at {maturity_height})"
                 )
             }
-            BlockchainError::ReorgTooDeep(depth) => write!(f, "reorg too deep: {} blocks", depth),
-            BlockchainError::TooManyInputs(count) => write!(f, "too many inputs: {}", count),
-            BlockchainError::TooManyOutputs(count) => write!(f, "too many outputs: {}", count),
+            BlockchainError::ReorgTooDeep(depth) => write!(f, "reorg too deep: {depth} blocks"),
+            BlockchainError::TooManyInputs(count) => write!(f, "too many inputs: {count}"),
+            BlockchainError::TooManyOutputs(count) => write!(f, "too many outputs: {count}"),
             BlockchainError::DustOutput {
                 index,
                 amount,
                 limit,
             } => {
-                write!(
-                    f,
-                    "output {} is dust: {} below limit {}",
-                    index, amount, limit
-                )
+                write!(f, "output {index} is dust: {amount} below limit {limit}")
             }
             BlockchainError::CheckpointMismatch {
                 height,
@@ -115,11 +110,10 @@ impl std::fmt::Display for BlockchainError {
             } => {
                 write!(
                     f,
-                    "checkpoint mismatch at height {}: expected {}, got {}",
-                    height, expected, got
+                    "checkpoint mismatch at height {height}: expected {expected}, got {got}"
                 )
             }
-            BlockchainError::Storage(e) => write!(f, "storage error: {}", e),
+            BlockchainError::Storage(e) => write!(f, "storage error: {e}"),
         }
     }
 }

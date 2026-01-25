@@ -55,7 +55,7 @@ impl Block {
         let mut hashes: Vec<Hash> = transactions.iter().map(|tx| tx.txid()).collect();
 
         while hashes.len() > 1 {
-            let mut next_level = Vec::with_capacity((hashes.len() + 1) / 2);
+            let mut next_level = Vec::with_capacity(hashes.len().div_ceil(2));
 
             for chunk in hashes.chunks(2) {
                 let combined = if chunk.len() == 2 {

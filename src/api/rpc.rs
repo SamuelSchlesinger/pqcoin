@@ -254,7 +254,7 @@ impl PqcoinRpcServer for RpcServerImpl {
         let tx_bytes = hex::decode(&tx_hex).map_err(|_| rpc_error(-22, "Invalid hex"))?;
 
         let (tx, _) = Transaction::deserialize(&tx_bytes)
-            .map_err(|e| rpc_error(-22, &format!("TX decode failed: {}", e)))?;
+            .map_err(|e| rpc_error(-22, &format!("TX decode failed: {e}")))?;
 
         let txid = tx.txid();
 
@@ -265,7 +265,7 @@ impl PqcoinRpcServer for RpcServerImpl {
 
         mempool
             .add(tx, &blockchain, current_height)
-            .map_err(|e| rpc_error(-25, &format!("TX rejected: {}", e)))?;
+            .map_err(|e| rpc_error(-25, &format!("TX rejected: {e}")))?;
 
         Ok(txid.to_hex())
     }

@@ -30,11 +30,11 @@ pub enum WalletError {
 impl std::fmt::Display for WalletError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            WalletError::Io(e) => write!(f, "I/O error: {}", e),
-            WalletError::Crypto(e) => write!(f, "crypto error: {}", e),
-            WalletError::InvalidFormat(e) => write!(f, "invalid format: {}", e),
+            WalletError::Io(e) => write!(f, "I/O error: {e}"),
+            WalletError::Crypto(e) => write!(f, "crypto error: {e}"),
+            WalletError::InvalidFormat(e) => write!(f, "invalid format: {e}"),
             WalletError::Locked => write!(f, "wallet is locked"),
-            WalletError::Rpc(e) => write!(f, "RPC error: {}", e),
+            WalletError::Rpc(e) => write!(f, "RPC error: {e}"),
         }
     }
 }
@@ -119,12 +119,12 @@ impl EncryptedKey {
 
         // Derive encryption key from password using Argon2
         let salt = SaltString::encode_b64(&salt_bytes)
-            .map_err(|e| WalletError::Crypto(format!("salt encoding failed: {}", e)))?;
+            .map_err(|e| WalletError::Crypto(format!("salt encoding failed: {e}")))?;
 
         let argon2 = Argon2::default();
         let password_hash = argon2
             .hash_password(password.as_bytes(), &salt)
-            .map_err(|e| WalletError::Crypto(format!("key derivation failed: {}", e)))?;
+            .map_err(|e| WalletError::Crypto(format!("key derivation failed: {e}")))?;
 
         // Extract the 32-byte hash output
         let hash_output = password_hash
@@ -138,12 +138,12 @@ impl EncryptedKey {
 
         // Encrypt the secret key
         let cipher = Aes256Gcm::new_from_slice(&key)
-            .map_err(|e| WalletError::Crypto(format!("cipher init failed: {}", e)))?;
+            .map_err(|e| WalletError::Crypto(format!("cipher init failed: {e}")))?;
 
         let nonce = Nonce::from_slice(&nonce_bytes);
         let ciphertext = cipher
             .encrypt(nonce, secret_key.to_bytes().as_ref())
-            .map_err(|e| WalletError::Crypto(format!("encryption failed: {}", e)))?;
+            .map_err(|e| WalletError::Crypto(format!("encryption failed: {e}")))?;
 
         // Zeroize the key
         key.zeroize();
@@ -153,7 +153,7 @@ impl EncryptedKey {
                 &base64::engine::general_purpose::STANDARD,
                 &ciphertext,
             ),
-            nonce: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &nonce_bytes),
+            nonce: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, nonce_bytes),
             salt: salt.to_string(),
         })
     }
@@ -165,20 +165,20 @@ impl EncryptedKey {
         // Decode base64 values
         let ciphertext = base64::engine::general_purpose::STANDARD
             .decode(&self.ciphertext)
-            .map_err(|e| WalletError::Crypto(format!("ciphertext decode failed: {}", e)))?;
+            .map_err(|e| WalletError::Crypto(format!("ciphertext decode failed: {e}")))?;
 
         let nonce_bytes = base64::engine::general_purpose::STANDARD
             .decode(&self.nonce)
-            .map_err(|e| WalletError::Crypto(format!("nonce decode failed: {}", e)))?;
+            .map_err(|e| WalletError::Crypto(format!("nonce decode failed: {e}")))?;
 
         // Derive encryption key from password using Argon2
         let salt = SaltString::from_b64(&self.salt)
-            .map_err(|e| WalletError::Crypto(format!("salt decode failed: {}", e)))?;
+            .map_err(|e| WalletError::Crypto(format!("salt decode failed: {e}")))?;
 
         let argon2 = Argon2::default();
         let password_hash = argon2
             .hash_password(password.as_bytes(), &salt)
-            .map_err(|e| WalletError::Crypto(format!("key derivation failed: {}", e)))?;
+            .map_err(|e| WalletError::Crypto(format!("key derivation failed: {e}")))?;
 
         // Extract the 32-byte hash output
         let hash_output = password_hash
@@ -192,7 +192,7 @@ impl EncryptedKey {
 
         // Decrypt the secret key
         let cipher = Aes256Gcm::new_from_slice(&key)
-            .map_err(|e| WalletError::Crypto(format!("cipher init failed: {}", e)))?;
+            .map_err(|e| WalletError::Crypto(format!("cipher init failed: {e}")))?;
 
         let nonce = Nonce::from_slice(&nonce_bytes);
         let plaintext = cipher

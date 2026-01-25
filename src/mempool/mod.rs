@@ -133,9 +133,7 @@ impl Mempool {
         }
 
         // Validate transaction against blockchain
-        if let Err(e) = validate_mempool_tx(&tx, blockchain, self) {
-            return Err(e);
-        }
+        validate_mempool_tx(&tx, blockchain, self)?;
 
         // Add to mempool
         for input in &tx.inputs {

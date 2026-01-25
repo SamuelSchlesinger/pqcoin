@@ -123,7 +123,7 @@ pub(crate) fn calculate_new_difficulty(
         (1u32, 1u32)
     } else if scaled > 0x7FFFFF {
         let shift = 64 - scaled.leading_zeros();
-        let extra_bytes = (shift.saturating_sub(23) + 7) / 8;
+        let extra_bytes = shift.saturating_sub(23).div_ceil(8);
         let new_exp = exponent.saturating_add(extra_bytes);
         let new_coef = (scaled >> (extra_bytes * 8)) as u32;
         if new_exp > 64 {

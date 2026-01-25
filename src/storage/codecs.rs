@@ -60,7 +60,7 @@ impl<'a> BytesDecode<'a> for OutPointCodec {
     type DItem = OutPoint;
 
     fn bytes_decode(bytes: &'a [u8]) -> Result<Self::DItem, BoxedError> {
-        OutPoint::from_bytes(bytes).map_err(|e| format!("failed to decode OutPoint: {}", e).into())
+        OutPoint::from_bytes(bytes).map_err(|e| format!("failed to decode OutPoint: {e}").into())
     }
 }
 
@@ -81,7 +81,7 @@ impl<'a, T: Deserialize + 'static> BytesDecode<'a> for BlockchainCodec<T> {
     type DItem = T;
 
     fn bytes_decode(bytes: &'a [u8]) -> Result<Self::DItem, BoxedError> {
-        T::from_bytes(bytes).map_err(|e| format!("failed to decode: {}", e).into())
+        T::from_bytes(bytes).map_err(|e| format!("failed to decode: {e}").into())
     }
 }
 

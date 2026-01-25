@@ -40,8 +40,8 @@ pub(crate) fn validate_checkpoint(height: u64, block_hash: Hash) -> Result<(), B
                 if block_hash != expected_hash {
                     return Err(BlockchainError::CheckpointMismatch {
                         height,
-                        expected: expected_hash,
-                        got: block_hash,
+                        expected: Box::new(expected_hash),
+                        got: Box::new(block_hash),
                     });
                 }
             }

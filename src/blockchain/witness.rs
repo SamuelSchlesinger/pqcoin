@@ -22,9 +22,9 @@ pub enum Witness {
     /// Witness for a P2PKH output: public key + signature.
     P2PKH {
         /// The public key (must hash to the address in the output).
-        public_key: PublicKey,
+        public_key: Box<PublicKey>,
         /// The signature over the transaction.
-        signature: Signature,
+        signature: Box<Signature>,
     },
     /// Witness for a multisig output: public keys + required signatures.
     Multisig {
@@ -90,8 +90,8 @@ impl Deserialize for Witness {
                     .ok_or_else(|| DeserializeError::InvalidData("invalid signature".into()))?;
                 Ok((
                     Witness::P2PKH {
-                        public_key,
-                        signature,
+                        public_key: Box::new(public_key),
+                        signature: Box::new(signature),
                     },
                     data,
                 ))
@@ -144,8 +144,7 @@ impl Deserialize for Witness {
                 Ok((Witness::Coinbase(coinbase_data), data))
             }
             _ => Err(DeserializeError::InvalidData(format!(
-                "unknown witness type: {}",
-                tag
+                "unknown witness type: {tag}"
             ))),
         }
     }

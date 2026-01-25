@@ -48,7 +48,7 @@ pub struct NetworkConfig {
 impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
-            listen_addr: format!("0.0.0.0:{}", DEFAULT_PORT).parse().unwrap(),
+            listen_addr: format!("0.0.0.0:{DEFAULT_PORT}").parse().unwrap(),
             max_peers: MAX_PEERS,
             max_outbound: MAX_OUTBOUND,
             seed_peers: Vec::new(),

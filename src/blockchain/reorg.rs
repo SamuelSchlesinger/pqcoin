@@ -163,6 +163,7 @@ pub(crate) fn get_chain_segment(from: Hash, to: Hash, blocks: &HashMap<Hash, Blo
 }
 
 /// Reorganize the chain to a new tip.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn reorganize_to(
     old_tip: Hash,
     new_tip: Hash,

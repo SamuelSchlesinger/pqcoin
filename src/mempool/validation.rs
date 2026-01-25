@@ -64,7 +64,7 @@ pub(crate) fn validate_witness(
             },
         ) => {
             // Check public key hashes to address
-            let pk_hash = hash(public_key.as_ref());
+            let pk_hash = hash((**public_key).as_ref());
             if pk_hash != *addr.as_hash() {
                 return false;
             }

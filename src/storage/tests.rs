@@ -54,7 +54,7 @@ fn test_u64_codec_roundtrip() {
     for value in [0u64, 1, 100, 1_000_000, u64::MAX / 2, u64::MAX] {
         let encoded = U64Codec::bytes_encode(&value).expect("encode failed");
         let decoded = U64Codec::bytes_decode(&encoded).expect("decode failed");
-        assert_eq!(value, decoded, "roundtrip failed for {}", value);
+        assert_eq!(value, decoded, "roundtrip failed for {value}");
     }
 }
 

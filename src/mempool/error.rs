@@ -30,14 +30,14 @@ impl std::fmt::Display for MempoolError {
         match self {
             MempoolError::Full => write!(f, "mempool full"),
             MempoolError::CoinbaseNotAllowed => write!(f, "coinbase transactions not allowed"),
-            MempoolError::DoubleSpend(txid) => write!(f, "conflicts with tx {}", txid),
-            MempoolError::MissingInput(op) => write!(f, "missing input {:?}", op),
+            MempoolError::DoubleSpend(txid) => write!(f, "conflicts with tx {txid}"),
+            MempoolError::MissingInput(op) => write!(f, "missing input {op:?}"),
             MempoolError::InvalidSignature => write!(f, "invalid signature"),
             MempoolError::InsufficientFunds => write!(f, "insufficient funds"),
-            MempoolError::ImmatureCoinbase(op) => write!(f, "immature coinbase output: {:?}", op),
+            MempoolError::ImmatureCoinbase(op) => write!(f, "immature coinbase output: {op:?}"),
             MempoolError::InvalidWitness => write!(f, "invalid witness type"),
             MempoolError::FeeTooLow { got, min } => {
-                write!(f, "fee rate {} is below minimum {}", got, min)
+                write!(f, "fee rate {got} is below minimum {min}")
             }
         }
     }

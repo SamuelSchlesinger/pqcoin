@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use crate::constants::{DEFAULT_PORT, MAX_OUTBOUND, MAX_PEERS};
 
 /// Main configuration structure for the pqcoin node.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     /// Network configuration.
     #[serde(default)]
@@ -30,18 +30,6 @@ pub struct Config {
     /// Storage configuration.
     #[serde(default)]
     pub storage: StorageConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            network: NetworkConfig::default(),
-            mining: MiningConfig::default(),
-            logging: LoggingConfig::default(),
-            rpc: RpcConfig::default(),
-            storage: StorageConfig::default(),
-        }
-    }
 }
 
 /// Storage configuration.
@@ -290,6 +278,7 @@ impl Config {
     }
 
     /// Apply CLI overrides to the configuration.
+    #[allow(clippy::too_many_arguments)]
     pub fn apply_cli_overrides(
         &mut self,
         port: Option<u16>,

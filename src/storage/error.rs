@@ -34,20 +34,19 @@ impl std::fmt::Display for StorageError {
                 write!(f, "failed to open storage at {}: {}", path.display(), error)
             }
             StorageError::CreateDb { name, error } => {
-                write!(f, "failed to create database '{}': {}", name, error)
+                write!(f, "failed to create database '{name}': {error}")
             }
-            StorageError::Transaction(e) => write!(f, "transaction error: {}", e),
-            StorageError::Read(e) => write!(f, "read error: {}", e),
-            StorageError::Write(e) => write!(f, "write error: {}", e),
-            StorageError::Delete(e) => write!(f, "delete error: {}", e),
-            StorageError::Commit(e) => write!(f, "commit error: {}", e),
-            StorageError::Corruption(e) => write!(f, "data corruption: {}", e),
+            StorageError::Transaction(e) => write!(f, "transaction error: {e}"),
+            StorageError::Read(e) => write!(f, "read error: {e}"),
+            StorageError::Write(e) => write!(f, "write error: {e}"),
+            StorageError::Delete(e) => write!(f, "delete error: {e}"),
+            StorageError::Commit(e) => write!(f, "commit error: {e}"),
+            StorageError::Corruption(e) => write!(f, "data corruption: {e}"),
             StorageError::NotInitialized => write!(f, "storage not initialized"),
             StorageError::GenesisMismatch { expected, found } => {
                 write!(
                     f,
-                    "genesis block mismatch: expected {}, found {}",
-                    expected, found
+                    "genesis block mismatch: expected {expected}, found {found}"
                 )
             }
         }
