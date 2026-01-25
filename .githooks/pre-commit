@@ -1,0 +1,15 @@
+#!/bin/sh
+# Pre-commit hook to run cargo fmt
+
+# Run cargo fmt and check if there are changes
+cargo fmt --all -- --check
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "Code is not formatted. Running cargo fmt..."
+    cargo fmt --all
+    echo ""
+    echo "Files have been formatted. Please stage the changes and commit again."
+    exit 1
+fi
+
+exit 0

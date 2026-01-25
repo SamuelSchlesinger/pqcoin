@@ -25,6 +25,14 @@ The design follows Bitcoin's proven UTXO model while removing scripting complexi
 cargo build --release
 ```
 
+## Development Setup
+
+To enable the pre-commit hook that auto-formats code:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ## Binaries
 
 - **pqcoin**: Full node with P2P networking and mining
