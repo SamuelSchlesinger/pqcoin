@@ -125,9 +125,11 @@ pub const HALVING_INTERVAL: u64 = 210_000;
 /// Prevents spam transactions and ensures miners have economic incentive to include transactions.
 pub const MIN_RELAY_FEE: u64 = 1000;
 
-/// Minimum output amount in quanta.
-/// Outputs below this threshold are considered "dust" and rejected to prevent UTXO bloat.
-pub const DUST_LIMIT: u64 = 5000;
+/// Fee rate used for dust calculation (quanta per 1000 bytes).
+/// An output is dust if spending it would cost more than its value at this rate.
+/// Set to 1/10th of MIN_RELAY_FEE to allow small payments while preventing
+/// truly uneconomical outputs. Dynamic dust = (spend_size * DUST_FEE_RATE) / 1000.
+pub const DUST_FEE_RATE: u64 = MIN_RELAY_FEE / 10;  // 100 quanta per KB
 
 /// Number of blocks after which an unconfirmed transaction expires (~72 hours at 10 min blocks).
 /// Prevents indefinite transaction hanging and allows fee bumping after expiry.

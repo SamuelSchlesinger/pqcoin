@@ -561,11 +561,7 @@ mod tests {
         let mut mempool = Mempool::new();
         let current_height = chain.height();
 
-        // Create first transaction spending the UTXO
-        let tx1 = create_spending_tx(&chain, &pk, &sk, address);
-        let tx1_id = tx1.txid();
-
-        // Create second transaction spending the same UTXO (different output)
+        // Find a spendable UTXO that both transactions will use
         let utxos = chain.utxos_for_address(&address);
         let (outpoint, utxo) = utxos
             .into_iter()
@@ -575,7 +571,8 @@ mod tests {
             })
             .expect("no spendable UTXO");
 
-        let mut tx2 = Transaction::new(
+        // Create first transaction spending the UTXO
+        let mut tx1 = Transaction::new(
             vec![TxInput::new(
                 outpoint,
                 Witness::P2PKH {
@@ -583,9 +580,28 @@ mod tests {
                     signature: ml_dsa_87::sign(&sk, &[0u8; 64]),
                 },
             )],
-            vec![TxOutput::p2pkh(utxo.output.amount - 20_000_000, address)], // different amount with sufficient fee
+            vec![TxOutput::p2pkh(utxo.output.amount - 20_000_000, address)],
         );
+        let signing_data = tx1.signing_data(0);
+        let message_hash = hash(&signing_data);
+        let signature = ml_dsa_87::sign(&sk, message_hash.as_bytes());
+        tx1.inputs[0].witness = Witness::P2PKH {
+            public_key: pk.clone(),
+            signature,
+        };
+        let tx1_id = tx1.txid();
 
+        // Create second transaction spending the same UTXO (different output amount)
+        let mut tx2 = Transaction::new(
+            vec![TxInput::new(
+                outpoint,  // Same outpoint as tx1!
+                Witness::P2PKH {
+                    public_key: pk.clone(),
+                    signature: ml_dsa_87::sign(&sk, &[0u8; 64]),
+                },
+            )],
+            vec![TxOutput::p2pkh(utxo.output.amount - 25_000_000, address)], // different amount
+        );
         let signing_data = tx2.signing_data(0);
         let message_hash = hash(&signing_data);
         let signature = ml_dsa_87::sign(&sk, message_hash.as_bytes());
@@ -597,9 +613,12 @@ mod tests {
         // Add first transaction
         assert!(mempool.add(tx1, &chain, current_height).is_ok());
 
-        // Try to add second (conflicting) transaction
+        // Try to add second (conflicting) transaction - should fail with DoubleSpend
         let result = mempool.add(tx2, &chain, current_height);
-        assert!(matches!(result, Err(MempoolError::DoubleSpend(id)) if id == tx1_id));
+        assert!(
+            matches!(result, Err(MempoolError::DoubleSpend(id)) if id == tx1_id),
+            "Expected DoubleSpend error with tx1_id, got: {:?}", result
+        );
     }
 
     #[test]

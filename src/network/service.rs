@@ -783,9 +783,10 @@ impl NetworkService {
                 // Validate and add to mempool
                 let txid = tx.txid();
                 let blockchain = self.blockchain.read().await;
+                let current_height = blockchain.height();
                 let mut mempool = self.mempool.write().await;
 
-                match mempool.add(tx.clone(), &blockchain) {
+                match mempool.add(tx.clone(), &blockchain, current_height) {
                     Ok(true) => {
                         drop(mempool);
                         drop(blockchain);
@@ -974,8 +975,9 @@ impl NetworkService {
         // Add to mempool
         {
             let blockchain = self.blockchain.read().await;
+            let current_height = blockchain.height();
             let mut mempool = self.mempool.write().await;
-            mempool.add(tx.clone(), &blockchain)?;
+            mempool.add(tx.clone(), &blockchain, current_height)?;
         }
 
         tracing::info!(
