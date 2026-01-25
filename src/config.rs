@@ -27,6 +27,9 @@ pub struct Config {
     /// RPC/API configuration.
     #[serde(default)]
     pub rpc: RpcConfig,
+    /// Storage configuration.
+    #[serde(default)]
+    pub storage: StorageConfig,
 }
 
 impl Default for Config {
@@ -36,6 +39,31 @@ impl Default for Config {
             mining: MiningConfig::default(),
             logging: LoggingConfig::default(),
             rpc: RpcConfig::default(),
+            storage: StorageConfig::default(),
+        }
+    }
+}
+
+/// Storage configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageConfig {
+    /// Path to the storage directory.
+    /// Defaults to ~/.pqcoin/data
+    #[serde(default = "default_storage_path")]
+    pub path: PathBuf,
+}
+
+fn default_storage_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".pqcoin")
+        .join("data")
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            path: default_storage_path(),
         }
     }
 }
@@ -254,6 +282,11 @@ impl Config {
         if other.rpc.bind != "127.0.0.1" {
             self.rpc.bind = other.rpc.bind;
         }
+
+        // Storage
+        if other.storage.path != default_storage_path() {
+            self.storage.path = other.storage.path;
+        }
     }
 
     /// Apply CLI overrides to the configuration.
@@ -337,8 +370,20 @@ metrics_port = 9091
 
 # Address to bind the RPC server to
 bind = "127.0.0.1"
+
+[storage]
+# Path to the blockchain data directory
+# Defaults to ~/.pqcoin/data
+# path = "/custom/path/to/data"
 "#
         .to_string()
+    }
+
+    /// Apply a data directory override.
+    pub fn apply_datadir_override(&mut self, datadir: Option<&PathBuf>) {
+        if let Some(path) = datadir {
+            self.storage.path = path.clone();
+        }
     }
 }
 

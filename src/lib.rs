@@ -80,6 +80,7 @@ pub mod crypto;
 pub mod mempool;
 pub mod miner;
 pub mod network;
+pub mod storage;
 pub mod wallet;
 
 // Re-export commonly used types for convenience

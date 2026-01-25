@@ -30,6 +30,10 @@ struct Cli {
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
 
+    /// Data directory for blockchain storage
+    #[arg(short = 'd', long = "datadir", value_name = "DIR")]
+    datadir: Option<PathBuf>,
+
     /// Port to listen on for P2P connections
     #[arg(short, long, value_name = "PORT")]
     port: Option<u16>,
@@ -117,13 +121,14 @@ async fn main() {
         cli.rpc_port,
         cli.rpc_bind.as_deref(),
     );
+    config.apply_datadir_override(cli.datadir.as_ref());
 
     // Initialize logging
     init_logging(&config.logging);
 
     // Load miner keypair from wallet if available, otherwise generate temporary
     let wallet_path = pqcoin::wallet::Wallet::default_path();
-    let (miner_keypair, miner_address) = if config.mining.enabled && wallet_path.exists() {
+    let (_miner_keypair, miner_address) = if config.mining.enabled && wallet_path.exists() {
         match pqcoin::wallet::WalletFile::load(&wallet_path) {
             Ok(wallet_file) => {
                 // Try password from PQCOIN_WALLET_PASSWORD env var
@@ -178,15 +183,33 @@ async fn main() {
     let genesis_address = Address::from_hash(pqcoin::crypto::hash(b"pqcoin genesis"));
     let genesis = create_genesis_block(0, DEFAULT_DIFFICULTY, INITIAL_REWARD, genesis_address);
 
-    // Initialize the blockchain
+    // Initialize the blockchain with persistent storage
     // Use test constants for faster block times during development
-    let blockchain = Blockchain::new(
+    tracing::info!(
+        storage_path = %config.storage.path.display(),
+        "opening blockchain storage"
+    );
+    let blockchain = match Blockchain::open(
+        &config.storage.path,
         genesis,
         TEST_DIFFICULTY_INTERVAL,
         TEST_TARGET_BLOCK_TIME,
         INITIAL_REWARD,
         HALVING_INTERVAL,
-    );
+    ) {
+        Ok(chain) => {
+            tracing::info!(
+                height = chain.height(),
+                tip = %chain.tip_hash().to_hex()[..16],
+                "blockchain loaded from storage"
+            );
+            chain
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "failed to open blockchain storage");
+            std::process::exit(1);
+        }
+    };
     let blockchain = Arc::new(RwLock::new(blockchain));
 
     // Configure the network

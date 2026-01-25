@@ -6,21 +6,28 @@
 //! - Message routing between peers and local handlers
 //! - Block and transaction relay
 
+mod defense;
+mod events;
+mod handlers;
+mod state;
+
+// Re-export public types
+pub use events::{NetworkError, NetworkEvent};
+
 use crate::blockchain::{Block, Blockchain, Transaction};
-use crate::constants::{
-    BAN_DURATION_SECS, BAN_SCORE_THRESHOLD, CONNECTION_RATE_LIMIT_SECS, DEFAULT_PORT,
-    MAX_CONNECTIONS_PER_IP, MAX_OUTBOUND, MAX_PEERS, MAX_PER_SUBNET, PING_INTERVAL_SECS,
-};
+use crate::constants::{DEFAULT_PORT, MAX_OUTBOUND, MAX_PEERS, PING_INTERVAL_SECS};
 use crate::mempool::Mempool;
 use crate::network::message::{InvItem, Message};
-use crate::network::peer::{Peer, PeerError};
+use crate::network::peer::Peer;
 use crate::network::sync::{SyncManager, SyncState};
-use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
+
+use handlers::{broadcast, handle_peer_message, send_to_peer};
+use state::{NetworkState, PeerCommand, PeerInfo, PeerMessage};
+
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use thiserror::Error;
+use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, RwLock};
 use tokio::time::interval;
@@ -47,242 +54,6 @@ impl Default for NetworkConfig {
             seed_peers: Vec::new(),
         }
     }
-}
-
-/// Events produced by the network service.
-#[derive(Debug, Clone)]
-pub enum NetworkEvent {
-    /// A new peer has connected.
-    PeerConnected { peer_id: u64, addr: SocketAddr },
-    /// A peer has disconnected.
-    PeerDisconnected { peer_id: u64, addr: SocketAddr },
-    /// A new block has been received.
-    NewBlock(Block),
-    /// A new transaction has been received.
-    NewTransaction(Transaction),
-    /// Sync state has changed.
-    SyncStateChanged(SyncState),
-}
-
-/// Errors from the network service.
-#[derive(Debug, Error)]
-pub enum NetworkError {
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("peer error: {0}")]
-    Peer(#[from] PeerError),
-    #[error("max peers reached")]
-    MaxPeersReached,
-    #[error("already connected to peer")]
-    AlreadyConnected,
-}
-
-/// Message sent to a peer task.
-#[derive(Debug)]
-enum PeerCommand {
-    /// Send a message to the peer.
-    Send(Message),
-    /// Disconnect the peer.
-    Disconnect,
-}
-
-/// Message sent from a peer task to the service.
-#[derive(Debug)]
-enum PeerMessage {
-    /// Handshake completed successfully.
-    HandshakeComplete { peer_id: u64, height: u64 },
-    /// A message was received from the peer.
-    Received { peer_id: u64, message: Message },
-    /// The peer disconnected.
-    Disconnected { peer_id: u64, error: Option<String> },
-}
-
-/// Ban list for misbehaving peers.
-///
-/// Tracks banned IP addresses with expiration times.
-struct BanList {
-    /// Banned IPs with their ban expiry time.
-    banned_ips: HashMap<IpAddr, Instant>,
-}
-
-impl BanList {
-    fn new() -> Self {
-        Self {
-            banned_ips: HashMap::new(),
-        }
-    }
-
-    /// Check if an IP is currently banned.
-    fn is_banned(&self, ip: &IpAddr) -> bool {
-        if let Some(expiry) = self.banned_ips.get(ip) {
-            Instant::now() < *expiry
-        } else {
-            false
-        }
-    }
-
-    /// Ban an IP for the configured duration.
-    fn ban(&mut self, ip: IpAddr) {
-        let expiry = Instant::now() + Duration::from_secs(BAN_DURATION_SECS);
-        self.banned_ips.insert(ip, expiry);
-        tracing::info!(ip = %ip, duration_secs = BAN_DURATION_SECS, "banned peer");
-    }
-
-    /// Clean up expired bans.
-    fn cleanup(&mut self) {
-        let now = Instant::now();
-        self.banned_ips.retain(|_, expiry| now < *expiry);
-    }
-}
-
-/// Rate limiter for incoming connections.
-///
-/// Prevents DoS attacks by limiting connection attempts per IP address.
-struct RateLimiter {
-    /// Last connection attempt time per IP.
-    ip_last_connect: HashMap<IpAddr, Instant>,
-    /// Current connection count per IP.
-    ip_connection_count: HashMap<IpAddr, usize>,
-}
-
-impl RateLimiter {
-    fn new() -> Self {
-        Self {
-            ip_last_connect: HashMap::new(),
-            ip_connection_count: HashMap::new(),
-        }
-    }
-
-    /// Check if a connection from this IP should be allowed.
-    fn check_allowed(&mut self, ip: IpAddr) -> bool {
-        let now = Instant::now();
-
-        // Check rate limit - must wait at least CONNECTION_RATE_LIMIT_SECS between attempts
-        if let Some(last) = self.ip_last_connect.get(&ip) {
-            if now.duration_since(*last) < Duration::from_secs(CONNECTION_RATE_LIMIT_SECS) {
-                return false;
-            }
-        }
-
-        // Check connection count per IP
-        let count = self.ip_connection_count.get(&ip).copied().unwrap_or(0);
-        if count >= MAX_CONNECTIONS_PER_IP {
-            return false;
-        }
-
-        self.ip_last_connect.insert(ip, now);
-        true
-    }
-
-    /// Record that a connection was established from this IP.
-    fn record_connection(&mut self, ip: IpAddr) {
-        *self.ip_connection_count.entry(ip).or_insert(0) += 1;
-    }
-
-    /// Record that a connection was closed from this IP.
-    fn record_disconnection(&mut self, ip: IpAddr) {
-        if let Some(count) = self.ip_connection_count.get_mut(&ip) {
-            *count = count.saturating_sub(1);
-            if *count == 0 {
-                self.ip_connection_count.remove(&ip);
-            }
-        }
-    }
-
-    /// Clean up stale entries older than 1 hour.
-    fn cleanup(&mut self) {
-        let now = Instant::now();
-        let stale_threshold = Duration::from_secs(3600); // 1 hour
-
-        self.ip_last_connect.retain(|_, last| {
-            now.duration_since(*last) < stale_threshold
-        });
-    }
-}
-
-/// Subnet limiter for eclipse attack protection.
-///
-/// Limits the number of connections from any single /16 subnet to prevent
-/// an attacker from monopolizing connections with IPs from the same subnet.
-struct SubnetLimiter {
-    /// Connection count per /16 subnet prefix.
-    subnet_counts: HashMap<[u8; 2], usize>,
-}
-
-impl SubnetLimiter {
-    fn new() -> Self {
-        Self {
-            subnet_counts: HashMap::new(),
-        }
-    }
-
-    /// Extract /16 prefix from IP address.
-    ///
-    /// For IPv4: returns first 2 bytes directly.
-    /// For IPv6: returns first 2 bytes of the address (covers /16 equivalent).
-    fn get_subnet_prefix(ip: &IpAddr) -> [u8; 2] {
-        match ip {
-            IpAddr::V4(ipv4) => {
-                let octets = ipv4.octets();
-                [octets[0], octets[1]]
-            }
-            IpAddr::V6(ipv6) => {
-                let octets = ipv6.octets();
-                [octets[0], octets[1]]
-            }
-        }
-    }
-
-    /// Check if we can accept another connection from this subnet.
-    fn check_allowed(&self, ip: &IpAddr) -> bool {
-        let prefix = Self::get_subnet_prefix(ip);
-        let count = self.subnet_counts.get(&prefix).copied().unwrap_or(0);
-        count < MAX_PER_SUBNET
-    }
-
-    /// Record a new connection from this subnet.
-    fn record_connection(&mut self, ip: &IpAddr) {
-        let prefix = Self::get_subnet_prefix(ip);
-        *self.subnet_counts.entry(prefix).or_insert(0) += 1;
-    }
-
-    /// Record a disconnection from this subnet.
-    fn record_disconnection(&mut self, ip: &IpAddr) {
-        let prefix = Self::get_subnet_prefix(ip);
-        if let Some(count) = self.subnet_counts.get_mut(&prefix) {
-            *count = count.saturating_sub(1);
-            if *count == 0 {
-                self.subnet_counts.remove(&prefix);
-            }
-        }
-    }
-}
-
-/// Shared state for the network service.
-struct NetworkState {
-    /// Connected peers.
-    peers: HashMap<u64, PeerInfo>,
-    /// Addresses we're connected to (to avoid duplicates).
-    connected_addrs: HashMap<SocketAddr, u64>,
-    /// Channels to send commands to peer tasks.
-    peer_senders: HashMap<u64, mpsc::Sender<PeerCommand>>,
-    /// Known peer addresses.
-    known_addrs: Vec<SocketAddr>,
-    /// Number of outbound connections.
-    outbound_count: usize,
-    /// Rate limiter for incoming connections.
-    rate_limiter: RateLimiter,
-    /// Ban list for misbehaving peers.
-    ban_list: BanList,
-    /// Subnet limiter for eclipse attack protection.
-    subnet_limiter: SubnetLimiter,
-}
-
-#[derive(Clone)]
-struct PeerInfo {
-    addr: SocketAddr,
-    height: u64,
-    outbound: bool,
 }
 
 /// The main network service.
@@ -328,16 +99,7 @@ impl NetworkService {
             blockchain,
             mempool,
             sync,
-            state: Arc::new(RwLock::new(NetworkState {
-                peers: HashMap::new(),
-                connected_addrs: HashMap::new(),
-                peer_senders: HashMap::new(),
-                known_addrs: Vec::new(),
-                outbound_count: 0,
-                rate_limiter: RateLimiter::new(),
-                ban_list: BanList::new(),
-                subnet_limiter: SubnetLimiter::new(),
-            })),
+            state: Arc::new(RwLock::new(NetworkState::new())),
             event_tx,
             event_rx: Some(event_rx),
             peer_msg_tx,
@@ -417,7 +179,14 @@ impl NetworkService {
 
                 // Handle messages from peer tasks
                 Some(msg) = peer_msg_rx.recv() => {
-                    self.handle_peer_message(msg).await;
+                    handle_peer_message(
+                        msg,
+                        &self.state,
+                        &self.blockchain,
+                        &self.mempool,
+                        &self.sync,
+                        &self.event_tx,
+                    ).await;
                 }
 
                 // Handle locally mined blocks
@@ -631,274 +400,14 @@ impl NetworkService {
         Ok(())
     }
 
-    /// Handle a message from a peer task.
-    async fn handle_peer_message(&self, msg: PeerMessage) {
-        match msg {
-            PeerMessage::HandshakeComplete { peer_id, height } => {
-                // Update peer's height in our state
-                let mut state = self.state.write().await;
-                if let Some(info) = state.peers.get_mut(&peer_id) {
-                    info.height = height;
-                    tracing::debug!(peer_id = peer_id, height = height, "updated peer height");
-                }
-            }
-            PeerMessage::Received { peer_id, message } => {
-                self.handle_message(peer_id, message).await;
-            }
-            PeerMessage::Disconnected { peer_id, error } => {
-                self.handle_disconnect(peer_id, error).await;
-            }
-        }
-    }
-
-    /// Handle a message from a peer.
-    async fn handle_message(&self, peer_id: u64, message: Message) {
-        match message {
-            Message::Ping(nonce) => {
-                tracing::debug!(peer_id = peer_id, nonce = nonce, "received ping, sending pong");
-                self.send_to_peer(peer_id, Message::Pong(nonce)).await;
-            }
-
-            Message::Pong(nonce) => {
-                tracing::debug!(peer_id = peer_id, nonce = nonce, "received pong");
-            }
-
-            Message::GetAddr => {
-                let state = self.state.read().await;
-                let addrs: Vec<SocketAddr> = state
-                    .known_addrs
-                    .iter()
-                    .take(1000)
-                    .cloned()
-                    .collect();
-                drop(state);
-                self.send_to_peer(peer_id, Message::Addr { addrs }).await;
-            }
-
-            Message::Addr { addrs } => {
-                let mut state = self.state.write().await;
-                for addr in addrs {
-                    if !state.known_addrs.contains(&addr) {
-                        state.known_addrs.push(addr);
-                    }
-                }
-            }
-
-            Message::AddrV2 { addrs } => {
-                // Handle timestamped addresses - filter out stale ones
-                let current_time = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
-                let mut state = self.state.write().await;
-                for taddr in addrs {
-                    if !taddr.is_stale(current_time) && !state.known_addrs.contains(&taddr.addr) {
-                        state.known_addrs.push(taddr.addr);
-                    }
-                }
-            }
-
-            Message::SendHeaders => {
-                // Peer requests block announcements via headers
-                // TODO: Track this preference per-peer and use Headers instead of Inv
-                tracing::debug!(peer_id = peer_id, "peer requested SendHeaders mode");
-            }
-
-            Message::Inv { items } => {
-                let mempool = self.mempool.read().await;
-                let mut sync = self.sync.write().await;
-                if let Some(response) = sync.process_inv(&items, |hash| mempool.contains(hash)).await {
-                    drop(sync);
-                    drop(mempool);
-                    self.send_to_peer(peer_id, response).await;
-                }
-            }
-
-            Message::GetData { items } => {
-                let mempool = self.mempool.read().await;
-                let sync = self.sync.read().await;
-                let responses = sync.respond_to_get_data(&items, |hash| mempool.get(hash).cloned()).await;
-                drop(sync);
-                drop(mempool);
-                for response in responses {
-                    self.send_to_peer(peer_id, response).await;
-                }
-            }
-
-            Message::GetHeaders { locator, stop } => {
-                let sync = self.sync.read().await;
-                let response = sync.respond_to_get_headers(&locator, &stop).await;
-                drop(sync);
-                self.send_to_peer(peer_id, response).await;
-            }
-
-            Message::Headers { headers } => {
-                let mut sync = self.sync.write().await;
-                match sync.process_headers(peer_id, headers).await {
-                    Ok(responses) => {
-                        drop(sync);
-                        for response in responses {
-                            self.send_to_peer(peer_id, response).await;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(peer_id = peer_id, error = %e, "header processing failed");
-                    }
-                }
-            }
-
-            Message::Block(block) => {
-                // First, process block with sync lock only
-                let block_hash = block.hash();
-                let added = {
-                    let mut sync = self.sync.write().await;
-                    sync.process_block(peer_id, block.clone()).await
-                };
-
-                match added {
-                    Ok(true) => {
-                        // Block was added, now update mempool separately
-                        {
-                            let mut mempool = self.mempool.write().await;
-                            mempool.remove_confirmed(&block.transactions);
-                            mempool.remove_conflicts(&block.transactions);
-                        }
-
-                        // Events and broadcast without holding locks
-                        let _ = self.event_tx.send(NetworkEvent::NewBlock(block.clone())).await;
-                        self.broadcast_except(peer_id, Message::Inv {
-                            items: vec![InvItem::block(block_hash)],
-                        }).await;
-                    }
-                    Ok(false) => {
-                        // Orphan block, already stored
-                    }
-                    Err(e) => {
-                        tracing::warn!(peer_id = peer_id, error = %e, "block processing failed");
-                    }
-                }
-            }
-
-            Message::Tx(tx) => {
-                // Validate and add to mempool
-                let txid = tx.txid();
-                let blockchain = self.blockchain.read().await;
-                let current_height = blockchain.height();
-                let mut mempool = self.mempool.write().await;
-
-                match mempool.add(tx.clone(), &blockchain, current_height) {
-                    Ok(true) => {
-                        drop(mempool);
-                        drop(blockchain);
-
-                        tracing::debug!(
-                            txid = %txid.to_hex()[..16],
-                            "added transaction to mempool"
-                        );
-
-                        let _ = self
-                            .event_tx
-                            .send(NetworkEvent::NewTransaction(tx.clone()))
-                            .await;
-
-                        // Relay to other peers
-                        self.broadcast_except(peer_id, Message::Inv {
-                            items: vec![InvItem::tx(txid)],
-                        }).await;
-                    }
-                    Ok(false) => {
-                        // Already in mempool, ignore
-                        tracing::trace!(txid = %txid.to_hex()[..16], "transaction already in mempool");
-                    }
-                    Err(e) => {
-                        tracing::debug!(
-                            txid = %txid.to_hex()[..16],
-                            error = %e,
-                            "rejected transaction"
-                        );
-                    }
-                }
-            }
-
-            Message::Reject { message, reason } => {
-                tracing::warn!(
-                    peer_id = peer_id,
-                    message = message,
-                    reason = reason,
-                    "peer rejected message"
-                );
-            }
-
-            Message::Version { .. } | Message::Verack => {
-                // Should not receive these after handshake
-                tracing::warn!(peer_id = peer_id, "unexpected handshake message");
-            }
-        }
-    }
-
-    /// Handle a peer disconnection.
-    async fn handle_disconnect(&self, peer_id: u64, error: Option<String>) {
-        let addr = {
-            let mut state = self.state.write().await;
-            let info = state.peers.remove(&peer_id);
-            state.peer_senders.remove(&peer_id);
-
-            if let Some(info) = &info {
-                state.connected_addrs.remove(&info.addr);
-                if info.outbound {
-                    state.outbound_count = state.outbound_count.saturating_sub(1);
-                }
-                // Update rate limiter and subnet limiter connection counts
-                state.rate_limiter.record_disconnection(info.addr.ip());
-                state.subnet_limiter.record_disconnection(&info.addr.ip());
-            }
-
-            info.map(|i| i.addr)
-        };
-
-        if let Some(addr) = addr {
-            tracing::info!(
-                peer_id = peer_id,
-                addr = %addr,
-                error = error.as_deref().unwrap_or("none"),
-                "peer disconnected"
-            );
-
-            let _ = self
-                .event_tx
-                .send(NetworkEvent::PeerDisconnected { peer_id, addr })
-                .await;
-
-            // Notify sync manager
-            let mut sync = self.sync.write().await;
-            sync.handle_peer_disconnected(peer_id);
-        }
-    }
-
     /// Send a message to a specific peer.
     async fn send_to_peer(&self, peer_id: u64, message: Message) {
-        let state = self.state.read().await;
-        if let Some(sender) = state.peer_senders.get(&peer_id) {
-            let _ = sender.send(PeerCommand::Send(message)).await;
-        }
-    }
-
-    /// Broadcast a message to all peers except one.
-    async fn broadcast_except(&self, except_peer_id: u64, message: Message) {
-        let state = self.state.read().await;
-        for (&peer_id, sender) in &state.peer_senders {
-            if peer_id != except_peer_id {
-                let _ = sender.send(PeerCommand::Send(message.clone())).await;
-            }
-        }
+        send_to_peer(peer_id, message, &self.state).await;
     }
 
     /// Broadcast a message to all peers.
     pub async fn broadcast(&self, message: Message) {
-        let state = self.state.read().await;
-        for sender in state.peer_senders.values() {
-            let _ = sender.send(PeerCommand::Send(message.clone())).await;
-        }
+        broadcast(message, &self.state).await;
     }
 
     /// Ban a peer and disconnect them.
