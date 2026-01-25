@@ -7,6 +7,31 @@
 //! - **Writes**: Write-through to LMDB for durability
 //! - **Startup**: Load entire state from LMDB into memory
 //!
+//! # Usage
+//!
+//! The recommended way to use persistent storage is through [`crate::blockchain::Blockchain::open`]:
+//!
+//! ```no_run
+//! use pqcoin::blockchain::{Blockchain, Address, create_genesis_block};
+//! use pqcoin::crypto;
+//!
+//! let address = Address::from_hash(crypto::hash(b"miner"));
+//! let genesis = create_genesis_block(0, 0x20ffffff, 50_000_000, address);
+//!
+//! // Open blockchain with persistent storage
+//! let blockchain = Blockchain::open(
+//!     "/path/to/data",
+//!     genesis,
+//!     2016,        // difficulty interval
+//!     600,         // target block time
+//!     50_000_000,  // initial reward
+//!     210_000,     // halving interval
+//! ).expect("failed to open storage");
+//!
+//! // State automatically loads from storage on startup
+//! println!("Chain height: {}", blockchain.height());
+//! ```
+//!
 //! # Transaction Soundness
 //!
 //! All mutations to a block's state happen within a single LMDB write transaction,
