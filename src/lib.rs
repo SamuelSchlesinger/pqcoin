@@ -22,6 +22,7 @@
 //! |--------|-------------|
 //! | [`crypto`] | Cryptographic primitives (SHA3-512, ML-DSA-87) |
 //! | [`blockchain`] | Core data structures (transactions, blocks, chain state) |
+//! | [`storage`] | Durable LMDB-based persistence layer |
 //! | [`mempool`] | Unconfirmed transaction pool with validation |
 //! | [`miner`] | Proof-of-work block mining |
 //! | [`network`] | P2P networking and block synchronization |
@@ -33,8 +34,13 @@
 //! │   Network   │────▶│  Blockchain │◀────│    Miner    │
 //! │   Service   │     │    State    │     │             │
 //! └─────────────┘     └─────────────┘     └─────────────┘
-//!        │                   ▲                   │
 //!        │                   │                   │
+//!        │                   ▼                   │
+//!        │            ┌─────────────┐            │
+//!        │            │   Storage   │            │
+//!        │            │   (LMDB)    │            │
+//!        │            └─────────────┘            │
+//!        │                   ▲                   │
 //!        ▼                   │                   │
 //! ┌─────────────┐            │                   │
 //! │   Mempool   │────────────┴───────────────────┘
@@ -107,3 +113,4 @@ pub use crypto::{Hash, PublicKey, SecretKey, Signature, hash, hash_many};
 
 pub use mempool::{Mempool, MempoolError};
 pub use miner::{mine_block, BackgroundMiner, MineResult};
+pub use storage::{LmdbStorage, StorageError, StorageRead, StorageWrite};
