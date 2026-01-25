@@ -1,2 +1,8 @@
 /target
 whitepaper/target/
+
+# LaTeX build artifacts
+whitepaper/*.aux
+whitepaper/*.log
+whitepaper/*.out
+whitepaper/*.toc
