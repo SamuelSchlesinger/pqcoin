@@ -17,6 +17,7 @@ The design follows Bitcoin's proven UTXO model while removing scripting complexi
 - **Simple transaction model**: No scripting, just P2PKH and multisig
 - **256-bit nonce**: Eliminates extraNonce complexity
 - **Bitcoin-inspired**: Familiar UTXO model, 10-minute blocks, 21M supply cap
+- **Durable storage**: LMDB-based persistence with crash recovery
 
 ## Building
 
@@ -37,7 +38,15 @@ cargo build --release
 
 # With custom configuration
 ./target/release/pqcoin --config pqcoin.toml
+
+# With custom data directory
+./target/release/pqcoin --datadir /path/to/data
+
+# Enable RPC API
+./target/release/pqcoin --rpc
 ```
+
+Blockchain data is persisted to `~/.pqcoin/data` by default. The node will automatically recover its state on restart.
 
 ## Wallet Usage
 
@@ -67,15 +76,23 @@ Example configuration:
 
 ```toml
 [network]
-listen_port = 8333
+port = 8333
 max_peers = 125
 
 [mining]
 enabled = true
-threads = 4
 
 [logging]
 level = "info"
+
+[rpc]
+enabled = true
+port = 8332
+bind = "127.0.0.1"
+
+[storage]
+# Data directory for blockchain storage (default: ~/.pqcoin/data)
+path = "/custom/path/to/data"
 ```
 
 ## Protocol Constants
@@ -107,6 +124,28 @@ The node exposes a JSON-RPC API compatible with common Bitcoin methods:
 - `sendrawtransaction` - Broadcast transaction
 - `getbalance` - Address balance
 - `getutxos` - Unspent outputs
+
+## Architecture
+
+### Storage
+
+The node uses LMDB for durable storage with a hybrid cache + write-through architecture:
+
+- **Reads**: Served from in-memory caches (O(1) HashMap lookups)
+- **Writes**: Persisted to LMDB in atomic transactions
+- **Startup**: State loaded from LMDB into memory
+
+All block mutations are atomic - if the process crashes mid-write, LMDB automatically rolls back to the last consistent state.
+
+**Database schema:**
+
+| Database | Key | Value | Purpose |
+|----------|-----|-------|---------|
+| `blocks` | Hash | Block | All blocks by hash |
+| `heights` | Hash | u64 | Block hash → height |
+| `utxos` | OutPoint | Utxo | Unspent outputs |
+| `tx_index` | Hash | Hash | Transaction → block |
+| `metadata` | String | bytes | Chain tip, config |
 
 ## Documentation
 
