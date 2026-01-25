@@ -9,7 +9,7 @@
 use crate::blockchain::{Block, Blockchain, Transaction};
 use crate::constants::{
     BAN_DURATION_SECS, BAN_SCORE_THRESHOLD, CONNECTION_RATE_LIMIT_SECS, DEFAULT_PORT,
-    MAX_CONNECTIONS_PER_IP, MAX_OUTBOUND, MAX_PEERS, PING_INTERVAL_SECS,
+    MAX_CONNECTIONS_PER_IP, MAX_OUTBOUND, MAX_PEERS, MAX_PER_SUBNET, PING_INTERVAL_SECS,
 };
 use crate::mempool::Mempool;
 use crate::network::message::{InvItem, Message};
@@ -200,6 +200,64 @@ impl RateLimiter {
     }
 }
 
+/// Subnet limiter for eclipse attack protection.
+///
+/// Limits the number of connections from any single /16 subnet to prevent
+/// an attacker from monopolizing connections with IPs from the same subnet.
+struct SubnetLimiter {
+    /// Connection count per /16 subnet prefix.
+    subnet_counts: HashMap<[u8; 2], usize>,
+}
+
+impl SubnetLimiter {
+    fn new() -> Self {
+        Self {
+            subnet_counts: HashMap::new(),
+        }
+    }
+
+    /// Extract /16 prefix from IP address.
+    ///
+    /// For IPv4: returns first 2 bytes directly.
+    /// For IPv6: returns first 2 bytes of the address (covers /16 equivalent).
+    fn get_subnet_prefix(ip: &IpAddr) -> [u8; 2] {
+        match ip {
+            IpAddr::V4(ipv4) => {
+                let octets = ipv4.octets();
+                [octets[0], octets[1]]
+            }
+            IpAddr::V6(ipv6) => {
+                let octets = ipv6.octets();
+                [octets[0], octets[1]]
+            }
+        }
+    }
+
+    /// Check if we can accept another connection from this subnet.
+    fn check_allowed(&self, ip: &IpAddr) -> bool {
+        let prefix = Self::get_subnet_prefix(ip);
+        let count = self.subnet_counts.get(&prefix).copied().unwrap_or(0);
+        count < MAX_PER_SUBNET
+    }
+
+    /// Record a new connection from this subnet.
+    fn record_connection(&mut self, ip: &IpAddr) {
+        let prefix = Self::get_subnet_prefix(ip);
+        *self.subnet_counts.entry(prefix).or_insert(0) += 1;
+    }
+
+    /// Record a disconnection from this subnet.
+    fn record_disconnection(&mut self, ip: &IpAddr) {
+        let prefix = Self::get_subnet_prefix(ip);
+        if let Some(count) = self.subnet_counts.get_mut(&prefix) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                self.subnet_counts.remove(&prefix);
+            }
+        }
+    }
+}
+
 /// Shared state for the network service.
 struct NetworkState {
     /// Connected peers.
@@ -216,6 +274,8 @@ struct NetworkState {
     rate_limiter: RateLimiter,
     /// Ban list for misbehaving peers.
     ban_list: BanList,
+    /// Subnet limiter for eclipse attack protection.
+    subnet_limiter: SubnetLimiter,
 }
 
 #[derive(Clone)]
@@ -276,6 +336,7 @@ impl NetworkService {
                 outbound_count: 0,
                 rate_limiter: RateLimiter::new(),
                 ban_list: BanList::new(),
+                subnet_limiter: SubnetLimiter::new(),
             })),
             event_tx,
             event_rx: Some(event_rx),
@@ -426,6 +487,12 @@ impl NetworkService {
                 return Err(NetworkError::MaxPeersReached);
             }
 
+            // Check subnet diversity (eclipse attack protection)
+            if !state.subnet_limiter.check_allowed(&ip) {
+                tracing::debug!(addr = %addr, "connection rejected: subnet limit reached");
+                return Err(NetworkError::MaxPeersReached);
+            }
+
             if state.connected_addrs.contains_key(&addr) {
                 return Err(NetworkError::AlreadyConnected);
             }
@@ -433,8 +500,9 @@ impl NetworkService {
                 return Err(NetworkError::MaxPeersReached);
             }
 
-            // Record the connection for rate limiting
+            // Record the connection for rate limiting and subnet tracking
             state.rate_limiter.record_connection(ip);
+            state.subnet_limiter.record_connection(&ip);
         }
 
         tracing::info!(addr = %addr, "incoming connection");
@@ -715,9 +783,10 @@ impl NetworkService {
                 // Validate and add to mempool
                 let txid = tx.txid();
                 let blockchain = self.blockchain.read().await;
+                let current_height = blockchain.height();
                 let mut mempool = self.mempool.write().await;
 
-                match mempool.add(tx.clone(), &blockchain) {
+                match mempool.add(tx.clone(), &blockchain, current_height) {
                     Ok(true) => {
                         drop(mempool);
                         drop(blockchain);
@@ -779,8 +848,9 @@ impl NetworkService {
                 if info.outbound {
                     state.outbound_count = state.outbound_count.saturating_sub(1);
                 }
-                // Update rate limiter connection count
+                // Update rate limiter and subnet limiter connection counts
                 state.rate_limiter.record_disconnection(info.addr.ip());
+                state.subnet_limiter.record_disconnection(&info.addr.ip());
             }
 
             info.map(|i| i.addr)
@@ -905,8 +975,9 @@ impl NetworkService {
         // Add to mempool
         {
             let blockchain = self.blockchain.read().await;
+            let current_height = blockchain.height();
             let mut mempool = self.mempool.write().await;
-            mempool.add(tx.clone(), &blockchain)?;
+            mempool.add(tx.clone(), &blockchain, current_height)?;
         }
 
         tracing::info!(

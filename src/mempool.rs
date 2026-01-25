@@ -23,17 +23,34 @@
 //! unaffected by this limitation.
 
 use crate::blockchain::{Blockchain, OutPoint, Serialize, Transaction, TxOutput};
+use crate::constants::{MIN_RELAY_FEE, TX_EXPIRY_BLOCKS};
 use crate::crypto::Hash;
 use std::collections::{HashMap, HashSet};
 
 /// Maximum transactions in mempool.
 pub const MAX_MEMPOOL_SIZE: usize = 5000;
 
+/// Entry in the mempool containing transaction and metadata.
+#[derive(Clone, Debug)]
+pub struct MempoolEntry {
+    /// The transaction.
+    pub tx: Transaction,
+    /// Block height when the transaction was added to the mempool.
+    pub added_height: u64,
+}
+
+impl MempoolEntry {
+    /// Create a new mempool entry.
+    pub fn new(tx: Transaction, added_height: u64) -> Self {
+        Self { tx, added_height }
+    }
+}
+
 /// Transaction mempool.
 #[derive(Clone)]
 pub struct Mempool {
     /// Transactions indexed by txid.
-    txs: HashMap<Hash, Transaction>,
+    txs: HashMap<Hash, MempoolEntry>,
     /// Track which outpoints are spent by mempool txs (to detect conflicts).
     spent_outpoints: HashMap<OutPoint, Hash>,
 }
@@ -63,13 +80,24 @@ impl Mempool {
 
     /// Get a transaction by txid.
     pub fn get(&self, txid: &Hash) -> Option<&Transaction> {
+        self.txs.get(txid).map(|entry| &entry.tx)
+    }
+
+    /// Get a mempool entry by txid.
+    pub fn get_entry(&self, txid: &Hash) -> Option<&MempoolEntry> {
         self.txs.get(txid)
     }
 
     /// Add a transaction to the mempool.
     ///
     /// Returns true if added, false if already present or conflicts.
-    pub fn add(&mut self, tx: Transaction, blockchain: &Blockchain) -> Result<bool, MempoolError> {
+    /// The `current_height` parameter is used to track when the transaction was added.
+    pub fn add(
+        &mut self,
+        tx: Transaction,
+        blockchain: &Blockchain,
+        current_height: u64,
+    ) -> Result<bool, MempoolError> {
         let txid = tx.txid();
 
         // Already in mempool?
@@ -85,6 +113,18 @@ impl Mempool {
         // Coinbase not allowed in mempool
         if tx.is_coinbase() {
             return Err(MempoolError::CoinbaseNotAllowed);
+        }
+
+        // Check minimum relay fee
+        if let Some(fee) = self.calculate_fee(&tx, blockchain) {
+            let tx_size = tx.to_bytes().len() as u64;
+            let fee_rate = if tx_size > 0 { fee / tx_size } else { 0 };
+            if fee_rate < MIN_RELAY_FEE {
+                return Err(MempoolError::FeeTooLow {
+                    got: fee_rate,
+                    min: MIN_RELAY_FEE,
+                });
+            }
         }
 
         // Check for double-spends within mempool
@@ -103,20 +143,39 @@ impl Mempool {
         for input in &tx.inputs {
             self.spent_outpoints.insert(input.outpoint, txid);
         }
-        self.txs.insert(txid, tx);
+        self.txs.insert(txid, MempoolEntry::new(tx, current_height));
 
         Ok(true)
     }
 
     /// Remove a transaction from the mempool.
     pub fn remove(&mut self, txid: &Hash) -> Option<Transaction> {
-        if let Some(tx) = self.txs.remove(txid) {
-            for input in &tx.inputs {
+        if let Some(entry) = self.txs.remove(txid) {
+            for input in &entry.tx.inputs {
                 self.spent_outpoints.remove(&input.outpoint);
             }
-            Some(tx)
+            Some(entry.tx)
         } else {
             None
+        }
+    }
+
+    /// Remove expired transactions from the mempool.
+    ///
+    /// Transactions that have been in the mempool for more than TX_EXPIRY_BLOCKS
+    /// will be removed.
+    pub fn cleanup_expired(&mut self, current_height: u64) {
+        let expired_txids: Vec<Hash> = self
+            .txs
+            .iter()
+            .filter(|(_, entry)| {
+                current_height.saturating_sub(entry.added_height) >= TX_EXPIRY_BLOCKS
+            })
+            .map(|(txid, _)| *txid)
+            .collect();
+
+        for txid in expired_txids {
+            self.remove(&txid);
         }
     }
 
@@ -150,7 +209,11 @@ impl Mempool {
     pub fn get_block_txs(&self, max_txs: usize) -> Vec<Transaction> {
         // Note: This is a simple version that doesn't require blockchain reference.
         // For proper fee calculation, use get_block_txs_with_fees.
-        self.txs.values().take(max_txs).cloned().collect()
+        self.txs
+            .values()
+            .take(max_txs)
+            .map(|entry| entry.tx.clone())
+            .collect()
     }
 
     /// Get transactions for block template sorted by fee rate (fee per byte).
@@ -160,14 +223,14 @@ impl Mempool {
         let mut txs_with_fee_rate: Vec<(&Transaction, f64)> = self
             .txs
             .values()
-            .filter_map(|tx| {
-                let fee = self.calculate_fee(tx, blockchain)?;
-                let size = tx.to_bytes().len();
+            .filter_map(|entry| {
+                let fee = self.calculate_fee(&entry.tx, blockchain)?;
+                let size = entry.tx.to_bytes().len();
                 if size == 0 {
                     return None;
                 }
                 let fee_rate = fee as f64 / size as f64;
-                Some((tx, fee_rate))
+                Some((&entry.tx, fee_rate))
             })
             .collect();
 
@@ -224,6 +287,13 @@ pub enum MempoolError {
     ImmatureCoinbase(OutPoint),
     /// Transaction witness type doesn't match output locking condition.
     InvalidWitness,
+    /// Transaction fee rate is below the minimum relay fee.
+    FeeTooLow {
+        /// The fee rate that was provided.
+        got: u64,
+        /// The minimum required fee rate.
+        min: u64,
+    },
 }
 
 impl std::fmt::Display for MempoolError {
@@ -237,6 +307,9 @@ impl std::fmt::Display for MempoolError {
             MempoolError::InsufficientFunds => write!(f, "insufficient funds"),
             MempoolError::ImmatureCoinbase(op) => write!(f, "immature coinbase output: {:?}", op),
             MempoolError::InvalidWitness => write!(f, "invalid witness type"),
+            MempoolError::FeeTooLow { got, min } => {
+                write!(f, "fee rate {} is below minimum {}", got, min)
+            }
         }
     }
 }
@@ -401,12 +474,23 @@ mod tests {
         (chain, pk, sk, address)
     }
 
-    // Helper to create a valid spending transaction
+    // Helper to create a valid spending transaction with sufficient fee
     fn create_spending_tx(
         chain: &Blockchain,
         pk: &crate::crypto::PublicKey,
         sk: &crate::crypto::SecretKey,
         address: Address,
+    ) -> Transaction {
+        create_spending_tx_with_fee(chain, pk, sk, address, 20_000_000)
+    }
+
+    // Helper to create a spending transaction with a specific fee
+    fn create_spending_tx_with_fee(
+        chain: &Blockchain,
+        pk: &crate::crypto::PublicKey,
+        sk: &crate::crypto::SecretKey,
+        address: Address,
+        fee: u64,
     ) -> Transaction {
         let utxos = chain.utxos_for_address(&address);
         let (outpoint, utxo) = utxos
@@ -425,7 +509,7 @@ mod tests {
                     signature: ml_dsa_87::sign(sk, &[0u8; 64]), // placeholder
                 },
             )],
-            vec![TxOutput::p2pkh(utxo.output.amount - 1000, address)], // 1000 fee
+            vec![TxOutput::p2pkh(utxo.output.amount - fee, address)],
         );
 
         // Sign properly
@@ -444,9 +528,10 @@ mod tests {
     fn test_mempool_add_valid_transaction() {
         let (chain, pk, sk, address) = test_blockchain();
         let mut mempool = Mempool::new();
+        let current_height = chain.height();
 
         let tx = create_spending_tx(&chain, &pk, &sk, address);
-        let result = mempool.add(tx, &chain);
+        let result = mempool.add(tx, &chain, current_height);
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), true);
@@ -457,14 +542,15 @@ mod tests {
     fn test_mempool_double_add_same_tx() {
         let (chain, pk, sk, address) = test_blockchain();
         let mut mempool = Mempool::new();
+        let current_height = chain.height();
 
         let tx = create_spending_tx(&chain, &pk, &sk, address);
         let txid = tx.txid();
 
         // Add first time
-        assert!(mempool.add(tx.clone(), &chain).unwrap());
+        assert!(mempool.add(tx.clone(), &chain, current_height).unwrap());
         // Add second time - should return false (already present)
-        assert!(!mempool.add(tx, &chain).unwrap());
+        assert!(!mempool.add(tx, &chain, current_height).unwrap());
         assert_eq!(mempool.len(), 1);
         assert!(mempool.contains(&txid));
     }
@@ -473,12 +559,9 @@ mod tests {
     fn test_mempool_double_spend_detection() {
         let (chain, pk, sk, address) = test_blockchain();
         let mut mempool = Mempool::new();
+        let current_height = chain.height();
 
-        // Create first transaction spending the UTXO
-        let tx1 = create_spending_tx(&chain, &pk, &sk, address);
-        let tx1_id = tx1.txid();
-
-        // Create second transaction spending the same UTXO (different output)
+        // Find a spendable UTXO that both transactions will use
         let utxos = chain.utxos_for_address(&address);
         let (outpoint, utxo) = utxos
             .into_iter()
@@ -488,7 +571,8 @@ mod tests {
             })
             .expect("no spendable UTXO");
 
-        let mut tx2 = Transaction::new(
+        // Create first transaction spending the UTXO
+        let mut tx1 = Transaction::new(
             vec![TxInput::new(
                 outpoint,
                 Witness::P2PKH {
@@ -496,9 +580,28 @@ mod tests {
                     signature: ml_dsa_87::sign(&sk, &[0u8; 64]),
                 },
             )],
-            vec![TxOutput::p2pkh(utxo.output.amount - 2000, address)], // different amount
+            vec![TxOutput::p2pkh(utxo.output.amount - 20_000_000, address)],
         );
+        let signing_data = tx1.signing_data(0);
+        let message_hash = hash(&signing_data);
+        let signature = ml_dsa_87::sign(&sk, message_hash.as_bytes());
+        tx1.inputs[0].witness = Witness::P2PKH {
+            public_key: pk.clone(),
+            signature,
+        };
+        let tx1_id = tx1.txid();
 
+        // Create second transaction spending the same UTXO (different output amount)
+        let mut tx2 = Transaction::new(
+            vec![TxInput::new(
+                outpoint,  // Same outpoint as tx1!
+                Witness::P2PKH {
+                    public_key: pk.clone(),
+                    signature: ml_dsa_87::sign(&sk, &[0u8; 64]),
+                },
+            )],
+            vec![TxOutput::p2pkh(utxo.output.amount - 25_000_000, address)], // different amount
+        );
         let signing_data = tx2.signing_data(0);
         let message_hash = hash(&signing_data);
         let signature = ml_dsa_87::sign(&sk, message_hash.as_bytes());
@@ -508,23 +611,27 @@ mod tests {
         };
 
         // Add first transaction
-        assert!(mempool.add(tx1, &chain).is_ok());
+        assert!(mempool.add(tx1, &chain, current_height).is_ok());
 
-        // Try to add second (conflicting) transaction
-        let result = mempool.add(tx2, &chain);
-        assert!(matches!(result, Err(MempoolError::DoubleSpend(id)) if id == tx1_id));
+        // Try to add second (conflicting) transaction - should fail with DoubleSpend
+        let result = mempool.add(tx2, &chain, current_height);
+        assert!(
+            matches!(result, Err(MempoolError::DoubleSpend(id)) if id == tx1_id),
+            "Expected DoubleSpend error with tx1_id, got: {:?}", result
+        );
     }
 
     #[test]
     fn test_mempool_remove_confirmed() {
         let (chain, pk, sk, address) = test_blockchain();
         let mut mempool = Mempool::new();
+        let current_height = chain.height();
 
         let tx = create_spending_tx(&chain, &pk, &sk, address);
         let txid = tx.txid();
 
         // Add to mempool
-        assert!(mempool.add(tx.clone(), &chain).unwrap());
+        assert!(mempool.add(tx.clone(), &chain, current_height).unwrap());
         assert_eq!(mempool.len(), 1);
 
         // Simulate block confirmation
@@ -537,12 +644,13 @@ mod tests {
     fn test_mempool_remove_conflicts() {
         let (chain, pk, sk, address) = test_blockchain();
         let mut mempool = Mempool::new();
+        let current_height = chain.height();
 
         let tx = create_spending_tx(&chain, &pk, &sk, address);
         let spent_outpoint = tx.inputs[0].outpoint;
 
         // Add to mempool
-        assert!(mempool.add(tx.clone(), &chain).unwrap());
+        assert!(mempool.add(tx.clone(), &chain, current_height).unwrap());
         assert_eq!(mempool.len(), 1);
 
         // Create a "block" transaction that spends the same UTXO
@@ -563,10 +671,11 @@ mod tests {
     fn test_mempool_get_block_txs_respects_limit() {
         let (chain, pk, sk, address) = test_blockchain();
         let mut mempool = Mempool::new();
+        let current_height = chain.height();
 
         // Add a transaction
         let tx = create_spending_tx(&chain, &pk, &sk, address);
-        mempool.add(tx, &chain).unwrap();
+        mempool.add(tx, &chain, current_height).unwrap();
 
         // Get with limit 0
         let txs = mempool.get_block_txs(0);
@@ -585,9 +694,10 @@ mod tests {
     fn test_mempool_rejects_coinbase() {
         let (chain, _pk, _sk, address) = test_blockchain();
         let mut mempool = Mempool::new();
+        let current_height = chain.height();
 
         let coinbase = Transaction::coinbase(100, 50_000_000, address);
-        let result = mempool.add(coinbase, &chain);
+        let result = mempool.add(coinbase, &chain, current_height);
 
         assert!(matches!(result, Err(MempoolError::CoinbaseNotAllowed)));
     }
@@ -596,6 +706,7 @@ mod tests {
     fn test_mempool_rejects_missing_input() {
         let (chain, pk, sk, _address) = test_blockchain();
         let mut mempool = Mempool::new();
+        let current_height = chain.height();
 
         // Create transaction referencing non-existent UTXO
         let fake_outpoint = OutPoint::new(hash(b"fake tx"), 0);
@@ -621,7 +732,7 @@ mod tests {
             signature,
         };
 
-        let result = mempool.add(tx, &chain);
+        let result = mempool.add(tx, &chain, current_height);
         assert!(matches!(result, Err(MempoolError::MissingInput(_))));
     }
 
@@ -629,11 +740,12 @@ mod tests {
     fn test_mempool_txids() {
         let (chain, pk, sk, address) = test_blockchain();
         let mut mempool = Mempool::new();
+        let current_height = chain.height();
 
         let tx = create_spending_tx(&chain, &pk, &sk, address);
         let txid = tx.txid();
 
-        mempool.add(tx, &chain).unwrap();
+        mempool.add(tx, &chain, current_height).unwrap();
 
         let txids = mempool.txids();
         assert_eq!(txids.len(), 1);
@@ -648,6 +760,7 @@ mod tests {
 
         let (chain, pk, sk, address) = test_blockchain();
         let mut mempool = Mempool::new();
+        let current_height = chain.height();
 
         // Create first transaction (TX1) that creates an output
         let tx1 = create_spending_tx(&chain, &pk, &sk, address);
@@ -655,7 +768,7 @@ mod tests {
         let tx1_output_amount = tx1.outputs[0].amount;
 
         // Add TX1 to mempool
-        assert!(mempool.add(tx1, &chain).unwrap());
+        assert!(mempool.add(tx1, &chain, current_height).unwrap());
         assert_eq!(mempool.len(), 1);
 
         // Try to create TX2 that spends TX1's output (which is only in mempool, not blockchain)
@@ -668,7 +781,7 @@ mod tests {
                     signature: ml_dsa_87::sign(&sk, &[0u8; 64]), // placeholder
                 },
             )],
-            vec![TxOutput::p2pkh(tx1_output_amount - 1000, address)],
+            vec![TxOutput::p2pkh(tx1_output_amount - 20_000_000, address)],
         );
 
         // Sign TX2
@@ -681,10 +794,60 @@ mod tests {
         };
 
         // TX2 should be rejected because TX1's output is not in the blockchain UTXO set
-        let result = mempool.add(tx2, &chain);
+        let result = mempool.add(tx2, &chain, current_height);
         assert!(
             matches!(result, Err(MempoolError::MissingInput(op)) if op == tx2_outpoint),
             "Chained transactions should be rejected with MissingInput error"
         );
+    }
+
+    #[test]
+    fn test_mempool_rejects_low_fee() {
+        let (chain, pk, sk, address) = test_blockchain();
+        let mut mempool = Mempool::new();
+        let current_height = chain.height();
+
+        // Create a transaction with very low fee (1 satoshi)
+        let tx = create_spending_tx_with_fee(&chain, &pk, &sk, address, 1);
+        let result = mempool.add(tx, &chain, current_height);
+
+        assert!(matches!(result, Err(MempoolError::FeeTooLow { .. })));
+    }
+
+    #[test]
+    fn test_mempool_cleanup_expired() {
+        let (chain, pk, sk, address) = test_blockchain();
+        let mut mempool = Mempool::new();
+
+        // Add transaction at height 100
+        let tx = create_spending_tx(&chain, &pk, &sk, address);
+        let txid = tx.txid();
+        mempool.add(tx, &chain, 100).unwrap();
+        assert_eq!(mempool.len(), 1);
+
+        // Cleanup at height 100 + TX_EXPIRY_BLOCKS - 1 should NOT remove the tx
+        mempool.cleanup_expired(100 + TX_EXPIRY_BLOCKS - 1);
+        assert_eq!(mempool.len(), 1);
+        assert!(mempool.contains(&txid));
+
+        // Cleanup at height 100 + TX_EXPIRY_BLOCKS should remove the tx
+        mempool.cleanup_expired(100 + TX_EXPIRY_BLOCKS);
+        assert_eq!(mempool.len(), 0);
+        assert!(!mempool.contains(&txid));
+    }
+
+    #[test]
+    fn test_mempool_entry_tracks_added_height() {
+        let (chain, pk, sk, address) = test_blockchain();
+        let mut mempool = Mempool::new();
+
+        let tx = create_spending_tx(&chain, &pk, &sk, address);
+        let txid = tx.txid();
+        let added_height = 12345;
+
+        mempool.add(tx, &chain, added_height).unwrap();
+
+        let entry = mempool.get_entry(&txid).unwrap();
+        assert_eq!(entry.added_height, added_height);
     }
 }

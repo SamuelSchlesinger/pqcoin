@@ -254,10 +254,11 @@ impl PqcoinRpcServer for RpcServerImpl {
 
         // Add to mempool
         let blockchain = self.state.blockchain.read().await;
+        let current_height = blockchain.height();
         let mut mempool = self.state.mempool.write().await;
 
         mempool
-            .add(tx, &blockchain)
+            .add(tx, &blockchain, current_height)
             .map_err(|e| rpc_error(-25, &format!("TX rejected: {}", e)))?;
 
         Ok(txid.to_hex())

@@ -46,13 +46,42 @@
 //! - Entries are removed when blocks are unapplied via `unapply_block()`
 
 use crate::constants::{
-    COINBASE_MATURITY, DIFFICULTY_COEFFICIENT_MASK, MAX_BLOCK_SIZE, MAX_BLOCK_TXS,
+    COINBASE_MATURITY, DIFFICULTY_COEFFICIENT_MASK, DUST_FEE_RATE, MAX_BLOCK_SIZE, MAX_BLOCK_TXS,
     MAX_FUTURE_BLOCK_TIME, MAX_MULTISIG_KEYS, MAX_REORG_DEPTH, MAX_SERIALIZE_BYTES,
     MAX_TX_INPUTS, MAX_TX_OUTPUTS,
 };
 use crate::crypto::{self, Hash, PublicKey, Signature};
 use rayon::prelude::*;
 use std::collections::HashMap;
+
+// ============================================================================
+// Checkpoint and AssumeValid Configuration
+// ============================================================================
+
+/// Hardcoded checkpoints for known-good blocks.
+/// Format: (height, block_hash_hex)
+/// These prevent long-range attacks during initial sync.
+const CHECKPOINTS: &[(u64, &str)] = &[
+    // Genesis block - add real hash after launch
+    // (0, "genesis_hash_here"),
+];
+
+/// Block hash for which we assume all ancestors have valid signatures.
+/// Set to None to verify all signatures (slower but more secure).
+/// This should be a block that is buried under significant PoW.
+const ASSUME_VALID: Option<&str> = None;
+
+/// Parse a hex string into a Hash.
+/// Returns None if the hex string is invalid or wrong length.
+fn parse_hash_hex(hex_str: &str) -> Option<Hash> {
+    let bytes = hex::decode(hex_str).ok()?;
+    if bytes.len() != 64 {
+        return None;
+    }
+    let mut arr = [0u8; 64];
+    arr.copy_from_slice(&bytes);
+    Some(Hash::from_bytes(arr))
+}
 
 // ============================================================================
 // Serialization Traits
@@ -590,6 +619,11 @@ pub enum LockingCondition {
     },
 }
 
+/// ML-DSA-87 public key size in bytes.
+const PQ_PUBLIC_KEY_SIZE: usize = 2592;
+/// ML-DSA-87 signature size in bytes.
+const PQ_SIGNATURE_SIZE: usize = 4627;
+
 impl LockingCondition {
     /// Create a P2PKH locking condition from a public key.
     pub fn p2pkh(pk: &PublicKey) -> Self {
@@ -615,6 +649,33 @@ impl LockingCondition {
         LockingCondition::Multisig {
             threshold,
             public_keys,
+        }
+    }
+
+    /// Estimate the size in bytes required to spend an output with this locking condition.
+    ///
+    /// This is used to calculate the dynamic dust limit. An output is considered dust
+    /// if the cost to spend it (based on this size) exceeds the output's value.
+    ///
+    /// Includes: OutPoint (68 bytes) + Witness data (varies by condition type)
+    pub fn estimated_spend_size(&self) -> usize {
+        const OUTPOINT_SIZE: usize = 64 + 4; // txid + index
+        const VARINT_OVERHEAD: usize = 4;    // conservative estimate for length prefixes
+
+        match self {
+            LockingCondition::P2PKH(_) => {
+                // OutPoint + tag(1) + pubkey + signature + varint overhead
+                OUTPOINT_SIZE + 1 + PQ_PUBLIC_KEY_SIZE + PQ_SIGNATURE_SIZE + VARINT_OVERHEAD
+            }
+            LockingCondition::Multisig { threshold, public_keys } => {
+                // OutPoint + tag(1) + all pubkeys + threshold signatures + varint overhead
+                let num_keys = public_keys.len();
+                let num_sigs = *threshold as usize;
+                OUTPOINT_SIZE + 1
+                    + (num_keys * PQ_PUBLIC_KEY_SIZE)
+                    + (num_sigs * PQ_SIGNATURE_SIZE)
+                    + VARINT_OVERHEAD * 2  // for key count and sig count
+            }
         }
     }
 }
@@ -1272,6 +1333,10 @@ pub enum BlockchainError {
     TooManyInputs(usize),
     /// Transaction has too many outputs.
     TooManyOutputs(usize),
+    /// Transaction output is below the dust limit.
+    DustOutput { index: usize, amount: u64, limit: u64 },
+    /// Block hash doesn't match the checkpoint at this height.
+    CheckpointMismatch { height: u64, expected: Hash, got: Hash },
 }
 
 impl std::fmt::Display for BlockchainError {
@@ -1297,6 +1362,13 @@ impl std::fmt::Display for BlockchainError {
             BlockchainError::ReorgTooDeep(depth) => write!(f, "reorg too deep: {} blocks", depth),
             BlockchainError::TooManyInputs(count) => write!(f, "too many inputs: {}", count),
             BlockchainError::TooManyOutputs(count) => write!(f, "too many outputs: {}", count),
+            BlockchainError::DustOutput { index, amount, limit } => {
+                write!(f, "output {} is dust: {} below limit {}", index, amount, limit)
+            }
+            BlockchainError::CheckpointMismatch { height, expected, got } => {
+                write!(f, "checkpoint mismatch at height {}: expected {}, got {}",
+                    height, expected, got)
+            }
         }
     }
 }
@@ -1352,6 +1424,23 @@ pub struct Blockchain {
     initial_reward: u64,
     /// Reward halving interval (blocks).
     halving_interval: u64,
+}
+
+/// Calculate the dust limit for a given locking condition.
+///
+/// The dust limit is based on the cost to spend the output at DUST_FEE_RATE.
+/// This ensures outputs are economically rational to spend while allowing
+/// small payments (since DUST_FEE_RATE is lower than MIN_RELAY_FEE).
+fn dust_limit(condition: &LockingCondition) -> u64 {
+    let spend_size = condition.estimated_spend_size() as u64;
+    // dust = spend_size * DUST_FEE_RATE / 1000 (rate is per KB)
+    (spend_size * DUST_FEE_RATE) / 1000
+}
+
+/// Check if an output amount is below the dust limit for its locking condition.
+/// Dust outputs are uneconomical to spend and bloat the UTXO set.
+fn is_dust(output: &TxOutput) -> bool {
+    output.amount < dust_limit(&output.condition)
 }
 
 impl Blockchain {
@@ -1938,6 +2027,19 @@ impl Blockchain {
             }
             if tx.outputs.len() > MAX_TX_OUTPUTS {
                 return Err(BlockchainError::TooManyOutputs(tx.outputs.len()));
+            }
+        }
+
+        // Check for dust outputs (skip coinbase transaction)
+        for tx in block.transactions.iter().skip(1) {
+            for (index, output) in tx.outputs.iter().enumerate() {
+                if is_dust(output) {
+                    return Err(BlockchainError::DustOutput {
+                        index,
+                        amount: output.amount,
+                        limit: dust_limit(&output.condition),
+                    });
+                }
             }
         }
 
@@ -3122,5 +3224,83 @@ mod tests {
         let block = create_block_with_txs(&chain, vec![tx], recipient_address);
         let result = chain.add_block(block);
         assert!(matches!(result, Err(BlockchainError::InsufficientInputs)));
+    }
+
+    #[test]
+    fn test_dust_output_rejected() {
+        let (mut chain, pk, sk, address) = test_blockchain();
+        let (recipient_pk, _) = test_keypair();
+        let recipient_address = Address::from_public_key(&recipient_pk);
+
+        // Calculate the dust limit for a P2PKH output
+        let p2pkh_condition = LockingCondition::P2PKH(recipient_address);
+        let expected_dust_limit = dust_limit(&p2pkh_condition);
+
+        // Create a transaction with an output below the dust limit
+        let (outpoint, utxo) = find_mature_utxo(&chain, &address);
+
+        let inputs = vec![TxInput::new(
+            outpoint,
+            Witness::P2PKH {
+                public_key: pk.clone(),
+                signature: crypto::ml_dsa_87::sign(&sk, b"placeholder"),
+            },
+        )];
+
+        // Create a dust output (below the calculated dust limit)
+        let dust_amount = expected_dust_limit - 1;
+        let change_amount = utxo.output.amount - dust_amount - 1000; // Leave some for fee
+        let outputs = vec![
+            TxOutput::p2pkh(dust_amount, recipient_address),
+            TxOutput::p2pkh(change_amount, address),
+        ];
+        let mut tx = Transaction::new(inputs, outputs);
+
+        let signing_data = tx.signing_data(0);
+        let message = crypto::hash(&signing_data);
+        let signature = crypto::ml_dsa_87::sign(&sk, message.as_bytes());
+        tx.inputs[0].witness = Witness::P2PKH {
+            public_key: pk.clone(),
+            signature,
+        };
+
+        let block = create_block_with_txs(&chain, vec![tx], recipient_address);
+        let result = chain.add_block(block);
+        assert!(
+            matches!(result, Err(BlockchainError::DustOutput { index: 0, amount, limit })
+                if amount == dust_amount && limit == expected_dust_limit),
+            "Expected DustOutput error with amount {} and limit {}, got {:?}",
+            dust_amount, expected_dust_limit, result
+        );
+    }
+
+    #[test]
+    fn test_dust_limit_scales_with_output_type() {
+        // Verify that multisig outputs have higher dust limits than P2PKH
+        let (pk1, _) = test_keypair();
+        let (pk2, _) = test_keypair();
+        let (pk3, _) = test_keypair();
+        let address = Address::from_public_key(&pk1);
+
+        let p2pkh_condition = LockingCondition::P2PKH(address);
+        let multisig_condition = LockingCondition::multisig(2, vec![pk1, pk2, pk3]);
+
+        let p2pkh_limit = dust_limit(&p2pkh_condition);
+        let multisig_limit = dust_limit(&multisig_condition);
+
+        // Multisig requires more data to spend (3 pubkeys + 2 sigs vs 1 pubkey + 1 sig)
+        assert!(
+            multisig_limit > p2pkh_limit,
+            "Multisig dust limit ({}) should be greater than P2PKH ({})",
+            multisig_limit, p2pkh_limit
+        );
+
+        // Verify reasonable values (at DUST_FEE_RATE = 100 quanta/KB)
+        // P2PKH spend size: ~7,288 bytes -> dust ~728 quanta
+        // 2-of-3 Multisig spend size: ~17,028 bytes -> dust ~1,702 quanta
+        assert!(p2pkh_limit > 500 && p2pkh_limit < 1500,
+            "P2PKH dust limit {} outside expected range", p2pkh_limit);
+        assert!(multisig_limit > 1000 && multisig_limit < 3000,
+            "Multisig dust limit {} outside expected range", multisig_limit);
     }
 }
