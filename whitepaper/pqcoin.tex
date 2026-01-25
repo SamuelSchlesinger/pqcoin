@@ -1,0 +1,521 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{fancyhdr}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{caption}
+
+\geometry{margin=1in}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=blue,
+    citecolor=blue
+}
+
+\lstset{
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    backgroundcolor=\color{gray!10}
+}
+
+\title{\textbf{pqcoin: A Post-Quantum Cryptocurrency}}
+\author{Version 0.1.0}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+pqcoin is a proof-of-work cryptocurrency designed to provide security against both classical and quantum computers. By utilizing NIST-standardized post-quantum cryptographic primitives---specifically ML-DSA-87 (FIPS 204) for digital signatures and SHA3-512 (FIPS 202) for hashing---pqcoin offers a quantum-resistant alternative to existing cryptocurrencies that rely on elliptic curve cryptography. The design follows Bitcoin's proven UTXO model while making deliberate simplifications: removing the scripting language in favor of two well-defined output types (P2PKH and M-of-N multisig), and modernizing the cryptographic foundation for the post-quantum era.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+
+\subsection{Motivation}
+
+Current cryptocurrencies like Bitcoin rely on the Elliptic Curve Digital Signature Algorithm (ECDSA) for transaction authorization. While secure against classical computers, ECDSA is vulnerable to Shor's algorithm running on a sufficiently powerful quantum computer. As quantum computing advances, the cryptocurrency ecosystem faces an existential threat to its security model.
+
+pqcoin addresses this threat by building on cryptographic primitives that are believed to be secure against both classical and quantum attacks, as standardized by NIST in their Post-Quantum Cryptography project.
+
+\subsection{Design Goals}
+
+\begin{enumerate}
+    \item \textbf{Quantum Resistance}: Use NIST-standardized post-quantum cryptographic algorithms
+    \item \textbf{Simplicity}: Remove unnecessary complexity while maintaining Bitcoin's proven security model
+    \item \textbf{Correctness}: Prioritize security and correctness over feature richness
+    \item \textbf{Compatibility}: Follow familiar patterns from Bitcoin where appropriate
+\end{enumerate}
+
+\section{Cryptographic Primitives}
+
+\subsection{Hash Function: SHA3-512 (FIPS 202)}
+
+All hashing operations in pqcoin use SHA3-512, providing:
+
+\begin{itemize}
+    \item \textbf{Output size}: 512 bits (64 bytes)
+    \item \textbf{Security level}: 256-bit classical security
+    \item \textbf{Quantum security}: $\sim$256-bit security against Grover's algorithm (effectively 128-bit due to birthday attacks)
+\end{itemize}
+
+SHA3-512 is used for:
+\begin{itemize}
+    \item Transaction ID computation
+    \item Block header hashing (proof-of-work)
+    \item Address derivation (hash of public key)
+    \item Merkle tree construction
+\end{itemize}
+
+\subsection{Digital Signatures: ML-DSA-87 (FIPS 204)}
+
+Transaction authorization uses ML-DSA-87 (formerly Dilithium5), a lattice-based digital signature scheme. Table~\ref{tab:mldsa} summarizes the key sizes.
+
+\begin{table}[h]
+\centering
+\caption{ML-DSA-87 Key and Signature Sizes}
+\label{tab:mldsa}
+\begin{tabular}{@{}lr@{}}
+\toprule
+Component & Size (bytes) \\
+\midrule
+Public Key & 2,592 \\
+Secret Key & 4,896 \\
+Signature & 4,627 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+ML-DSA-87 provides NIST Level 5 security ($\sim$256-bit classical, $\sim$128-bit quantum security). This is the highest security level in the ML-DSA family, providing maximum protection against future advances in quantum computing.
+
+\subsection{Signature Construction}
+
+Signatures are computed over the SHA3-512 hash of the transaction's signing data:
+
+\begin{lstlisting}
+message = SHA3-512(signing_data(tx, input_index))
+signature = ML-DSA-87.Sign(secret_key, message)
+\end{lstlisting}
+
+This approach:
+\begin{enumerate}
+    \item Provides a fixed-size input regardless of transaction size
+    \item Matches Bitcoin's practice of signing transaction hashes
+    \item Is compatible with ML-DSA-87's design for signing arbitrary messages
+\end{enumerate}
+
+\section{Transaction Model}
+
+\subsection{UTXO Model}
+
+pqcoin uses the Unspent Transaction Output (UTXO) model, identical in concept to Bitcoin:
+
+\begin{itemize}
+    \item Transactions consume existing outputs (inputs) and create new outputs
+    \item Each output can only be spent once
+    \item The sum of input values must equal or exceed output values
+    \item The difference (inputs $-$ outputs) is the transaction fee
+\end{itemize}
+
+\subsection{Output Types}
+
+Unlike Bitcoin's scripting system, pqcoin supports exactly two output types:
+
+\subsubsection{Pay-to-Public-Key-Hash (P2PKH)}
+
+The standard single-signature output. Funds are locked to the SHA3-512 hash of a public key. To spend:
+\begin{enumerate}
+    \item Provide the public key that hashes to the address
+    \item Provide a valid signature over the transaction
+\end{enumerate}
+
+\subsubsection{M-of-N Multisig}
+
+Multi-signature outputs requiring $M$ signatures from $N$ possible signers. Limited to a maximum of 15 keys due to post-quantum signature sizes.
+
+\subsection{Transaction Structure}
+
+\begin{lstlisting}
+Transaction {
+    version: u32,           // Currently 1
+    inputs: Vec<TxInput>,   // References to outputs being spent
+    outputs: Vec<TxOutput>, // New outputs being created
+}
+
+TxInput {
+    outpoint: OutPoint,     // (txid, index) reference
+    witness: Witness,       // Proof of authorization
+}
+
+TxOutput {
+    amount: u64,            // Value in quanta
+    condition: LockingCondition,  // P2PKH or Multisig
+}
+\end{lstlisting}
+
+\subsection{Dust Limit}
+
+To prevent UTXO set bloat, outputs must exceed a dynamic dust limit based on the cost to spend them:
+
+\begin{equation}
+\text{dust\_limit} = \frac{\text{estimated\_spend\_size} \times \text{DUST\_FEE\_RATE}}{1000}
+\end{equation}
+
+Where DUST\_FEE\_RATE = 100 quanta per KB. This ensures outputs are economically rational to spend, accounting for the larger post-quantum signatures.
+
+\section{Block Structure}
+
+\subsection{Block Header}
+
+The block header is 176 bytes, structured as shown in Table~\ref{tab:header}.
+
+\begin{table}[h]
+\centering
+\caption{Block Header Structure}
+\label{tab:header}
+\begin{tabular}{@{}llp{7cm}@{}}
+\toprule
+Field & Size & Description \\
+\midrule
+version & 4 bytes & Block format version \\
+prev\_hash & 64 bytes & SHA3-512 hash of previous header \\
+merkle\_root & 64 bytes & Root of transaction merkle tree \\
+timestamp & 8 bytes & Unix timestamp \\
+difficulty\_bits & 4 bytes & Compact difficulty target \\
+nonce & 32 bytes & Proof-of-work nonce \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{256-bit Nonce}
+
+pqcoin uses a 32-byte (256-bit) nonce, providing $2^{256}$ possible values. This design:
+\begin{itemize}
+    \item Eliminates nonce exhaustion concerns
+    \item Removes the need for Bitcoin-style extraNonce mechanisms
+    \item Simplifies mining implementation
+\end{itemize}
+
+\subsection{Merkle Root}
+
+The merkle root commits to all transactions using a binary hash tree:
+\begin{itemize}
+    \item Leaves are transaction IDs (SHA3-512 hashes)
+    \item Internal nodes are SHA3-512 hashes of concatenated children
+    \item Odd levels duplicate the last node
+\end{itemize}
+
+\subsection{Block Limits}
+
+\begin{table}[h]
+\centering
+\caption{Block Limits}
+\label{tab:blocklimits}
+\begin{tabular}{@{}lr@{}}
+\toprule
+Parameter & Value \\
+\midrule
+Max transactions & 1,000 (excluding coinbase) \\
+Max block size & 16 MB \\
+Max inputs per tx & 10,000 \\
+Max outputs per tx & 10,000 \\
+Max multisig keys & 15 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The 16 MB block size (vs Bitcoin's effective $\sim$4 MB) accommodates the larger post-quantum signatures.
+
+\section{Consensus Mechanism}
+
+\subsection{Proof of Work}
+
+Valid blocks must have a header hash less than or equal to the target:
+
+\begin{equation}
+\text{SHA3-512}(\text{block\_header}) \leq \text{target}
+\end{equation}
+
+The target is derived from difficulty\_bits using the formula:
+\begin{equation}
+\text{target} = \text{coefficient} \times 2^{8 \times (\text{exponent} - 3)}
+\end{equation}
+
+Where $\text{difficulty\_bits} = (\text{exponent} \ll 24) \mid \text{coefficient}$.
+
+\subsection{Difficulty Adjustment}
+
+Difficulty adjusts every 2,016 blocks to maintain a 10-minute average block time:
+
+\begin{enumerate}
+    \item Calculate actual time for the previous 2,016 blocks
+    \item Clamp adjustment to 4$\times$ in either direction
+    \item Scale the target: $\text{new\_target} = \text{old\_target} \times \frac{\text{actual\_time}}{\text{target\_time}}$
+\end{enumerate}
+
+A minimum difficulty floor (MIN\_DIFFICULTY\_BITS = 0x41ffffff) prevents difficulty from dropping below a safe threshold.
+
+\subsection{Chain Selection}
+
+The valid chain with the most cumulative proof-of-work is the canonical chain. Reorganizations are limited to 100 blocks to prevent long-range attacks.
+
+\subsection{Timestamp Rules}
+
+Block timestamps must:
+\begin{enumerate}
+    \item Be strictly greater than the Median-Time-Past (median of previous 11 blocks)
+    \item Not exceed current time + 2 hours
+\end{enumerate}
+
+This prevents timestamp manipulation attacks near difficulty adjustment boundaries.
+
+\section{Monetary Policy}
+
+\subsection{Block Reward}
+
+\begin{table}[h]
+\centering
+\caption{Monetary Parameters}
+\label{tab:monetary}
+\begin{tabular}{@{}lr@{}}
+\toprule
+Parameter & Value \\
+\midrule
+Initial reward & 50,000,000 quanta (50 coins) \\
+Halving interval & 210,000 blocks \\
+Smallest unit & 1 quantum \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Supply Schedule}
+
+Following Bitcoin's model:
+\begin{itemize}
+    \item Total supply asymptotically approaches 21 million coins
+    \item Reward halves every $\sim$4 years (at 10-minute blocks)
+    \item After 64 halvings, reward becomes 0
+\end{itemize}
+
+\subsection{Coinbase Maturity}
+
+Coinbase outputs cannot be spent until 100 blocks have been mined on top of them. This prevents issues from chain reorganizations affecting miner rewards.
+
+\section{Network Protocol}
+
+\subsection{Message Format}
+
+Messages use a length-prefixed framing format:
+
+\begin{lstlisting}
+[Magic: 4 bytes "PQCN"]
+[Command: 12 bytes]
+[Length: 4 bytes]
+[Checksum: 4 bytes]
+[Payload: variable]
+\end{lstlisting}
+
+The checksum is the first 4 bytes of SHA3-512(payload).
+
+\subsection{Message Types}
+
+\begin{table}[h]
+\centering
+\caption{Network Message Types}
+\label{tab:messages}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Message & Purpose \\
+\midrule
+version/verack & Handshake and capability exchange \\
+ping/pong & Keepalive \\
+inv/getdata & Inventory announcement and request \\
+getheaders/headers & Header synchronization \\
+block/tx & Block and transaction relay \\
+addr/addrv2 & Peer discovery \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Peer Management}
+
+\begin{table}[h]
+\centering
+\caption{Network Parameters}
+\label{tab:network}
+\begin{tabular}{@{}lr@{}}
+\toprule
+Parameter & Value \\
+\midrule
+Default port & 8333 \\
+Max connections & 125 (8 outbound) \\
+Max per IP & 3 \\
+Max per /16 subnet & 2 \\
+Ban duration & 24 hours \\
+Ping interval & 60 seconds \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Subnet limits help prevent eclipse attacks.
+
+\section{Wallet}
+
+\subsection{Key Storage}
+
+Wallet files use encrypted JSON format:
+\begin{itemize}
+    \item Secret keys encrypted with AES-256-GCM
+    \item Key derivation via Argon2 from user password
+    \item Memory is zeroized after use
+\end{itemize}
+
+\subsection{Address Format}
+
+Addresses are the full 64-byte SHA3-512 hash of the public key, displayed as 128 hexadecimal characters.
+
+\section{Security Considerations}
+
+\subsection{Quantum Resistance}
+
+pqcoin's security against quantum computers rests on:
+\begin{enumerate}
+    \item \textbf{ML-DSA-87}: Based on the Module-LWE problem, believed to be hard for quantum computers
+    \item \textbf{SHA3-512}: Grover's algorithm provides only quadratic speedup, leaving 256-bit security
+\end{enumerate}
+
+\subsection{Classical Security}
+
+Against classical computers:
+\begin{itemize}
+    \item 256-bit hash security (SHA3-512)
+    \item 256-bit signature security (ML-DSA-87 at NIST Level 5)
+\end{itemize}
+
+\subsection{Known Limitations}
+
+\begin{enumerate}
+    \item \textbf{Signature size}: ML-DSA-87 signatures (4,627 bytes) are $\sim$72$\times$ larger than ECDSA (64 bytes), affecting transaction throughput
+    \item \textbf{No scripting}: Complex smart contracts are not supported
+    \item \textbf{No chained transactions}: Mempool does not support spending unconfirmed outputs
+\end{enumerate}
+
+\section{Comparison with Bitcoin}
+
+\begin{table}[h]
+\centering
+\caption{pqcoin vs Bitcoin}
+\label{tab:comparison}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Feature & pqcoin & Bitcoin \\
+\midrule
+Hash function & SHA3-512 (64 bytes) & SHA-256 (32 bytes) \\
+Signature scheme & ML-DSA-87 & ECDSA (secp256k1) \\
+Signature size & 4,627 bytes & 64 bytes \\
+Public key size & 2,592 bytes & 33 bytes \\
+Quantum resistant & Yes & No \\
+Scripting & No (P2PKH + Multisig) & Yes (Script) \\
+Nonce size & 256 bits & 32 bits \\
+Block size limit & 16 MB & $\sim$4 MB \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Future Work}
+
+\begin{enumerate}
+    \item \textbf{Light clients}: Bloom filtering for SPV wallets
+    \item \textbf{Checkpoints}: Hardcoded block hashes for faster initial sync
+    \item \textbf{Assume-valid}: Skip signature verification for deeply-buried blocks
+    \item \textbf{Hardware wallet support}: Integration with post-quantum capable hardware
+\end{enumerate}
+
+\section{Conclusion}
+
+pqcoin provides a quantum-resistant cryptocurrency built on NIST-standardized cryptographic primitives. By simplifying Bitcoin's design while upgrading its cryptographic foundation, pqcoin offers a secure platform for value transfer in the post-quantum era.
+
+The deliberate constraints---no scripting, limited output types, no chained transactions---prioritize security and correctness over feature richness, making the codebase more auditable and the security model more analyzable.
+
+\section*{References}
+
+\begin{enumerate}
+    \item NIST FIPS 202: SHA-3 Standard: Permutation-Based Hash and Extendable-Output Functions
+    \item NIST FIPS 204: Module-Lattice-Based Digital Signature Standard
+    \item Nakamoto, S. (2008). Bitcoin: A Peer-to-Peer Electronic Cash System
+    \item NIST Post-Quantum Cryptography Standardization Process
+\end{enumerate}
+
+\appendix
+
+\section{Protocol Constants}
+
+\begin{lstlisting}
+// Protocol
+MAX_BLOCK_TXS = 1,000
+MAX_TX_INPUTS = 10,000
+MAX_TX_OUTPUTS = 10,000
+MAX_MULTISIG_KEYS = 15
+MAX_BLOCK_SIZE = 16 MB
+COINBASE_MATURITY = 100 blocks
+MAX_REORG_DEPTH = 100 blocks
+MAX_FUTURE_BLOCK_TIME = 2 hours
+
+// Mining
+INITIAL_REWARD = 50,000,000 quanta
+DIFFICULTY_INTERVAL = 2,016 blocks
+TARGET_BLOCK_TIME = 600 seconds
+HALVING_INTERVAL = 210,000 blocks
+MIN_DIFFICULTY_BITS = 0x41ffffff
+
+// Mempool
+MIN_RELAY_FEE = 1,000 quanta/byte
+DUST_FEE_RATE = 100 quanta/KB
+TX_EXPIRY_BLOCKS = 432 blocks (~72 hours)
+MAX_MEMPOOL_SIZE = 5,000 transactions
+
+// Network
+DEFAULT_PORT = 8333
+MAX_PEERS = 125
+MAX_OUTBOUND = 8
+BAN_DURATION = 24 hours
+PING_INTERVAL = 60 seconds
+\end{lstlisting}
+
+\section{Cryptographic Key Sizes}
+
+\begin{table}[h]
+\centering
+\caption{Cryptographic Component Sizes}
+\label{tab:keysizes}
+\begin{tabular}{@{}llr@{}}
+\toprule
+Algorithm & Component & Size (bytes) \\
+\midrule
+SHA3-512 & Hash output & 64 \\
+ML-DSA-87 & Public key & 2,592 \\
+ML-DSA-87 & Secret key & 4,896 \\
+ML-DSA-87 & Signature & 4,627 \\
+AES-256-GCM & Key & 32 \\
+AES-256-GCM & Nonce & 12 \\
+Argon2 & Salt & 16 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\end{document}
