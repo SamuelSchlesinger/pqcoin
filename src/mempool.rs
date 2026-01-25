@@ -464,7 +464,7 @@ mod tests {
                 merkle_root,
                 timestamp,
                 difficulty_bits: prev_block.header.difficulty_bits,
-                nonce: 0,
+                nonce: [0u8; 32],
             };
 
             let block = Block::new(header, vec![coinbase]);

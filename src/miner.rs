@@ -9,6 +9,12 @@
 //! maximizes miner revenue by including the highest-paying transactions first.
 //!
 //! See [`Mempool::get_block_txs_with_fees()`] for the sorting implementation.
+//!
+//! # Nonce Design
+//!
+//! pqcoin uses a 32-byte (256-bit) nonce, providing 2^256 possible values.
+//! This eliminates the need for Bitcoin-style extraNonce mechanisms, as the
+//! nonce space is effectively infinite for practical mining purposes.
 
 use crate::blockchain::{Address, Block, BlockHeader, Blockchain, Transaction};
 use crate::constants::MAX_BLOCK_TXS;
@@ -24,6 +30,23 @@ pub enum MineResult {
     Stopped,
     /// No work to do (already at tip).
     NoWork,
+}
+
+/// Increment a 32-byte nonce (little-endian).
+///
+/// This treats the 32-byte array as a 256-bit little-endian integer
+/// and increments it by 1. Returns true if the increment succeeded,
+/// false if it would overflow (which is practically impossible).
+#[inline]
+fn increment_nonce(nonce: &mut [u8; 32]) -> bool {
+    for byte in nonce.iter_mut() {
+        let (new_val, overflow) = byte.overflowing_add(1);
+        *byte = new_val;
+        if !overflow {
+            return true;
+        }
+    }
+    false // All bytes overflowed (2^256 iterations - practically impossible)
 }
 
 /// Mine a single block.
@@ -74,8 +97,11 @@ pub fn mine_block(
         merkle_root,
         timestamp,
         difficulty_bits,
-        nonce: 0,
+        nonce: [0u8; 32],
     };
+
+    // Counter for periodic timestamp updates
+    let mut hash_count: u64 = 0;
 
     // Mine!
     loop {
@@ -88,10 +114,12 @@ pub fn mine_block(
             return MineResult::Success(block);
         }
 
-        header.nonce = header.nonce.wrapping_add(1);
+        // Increment the 32-byte nonce
+        increment_nonce(&mut header.nonce);
+        hash_count += 1;
 
         // Every 100k hashes, update timestamp (ensuring it stays > prev_timestamp)
-        if header.nonce % 100_000 == 0 {
+        if hash_count % 100_000 == 0 {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

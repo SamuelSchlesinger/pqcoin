@@ -48,7 +48,7 @@
 use crate::constants::{
     COINBASE_MATURITY, DIFFICULTY_COEFFICIENT_MASK, DUST_FEE_RATE, MAX_BLOCK_SIZE, MAX_BLOCK_TXS,
     MAX_FUTURE_BLOCK_TIME, MAX_MULTISIG_KEYS, MAX_REORG_DEPTH, MAX_SERIALIZE_BYTES,
-    MAX_TX_INPUTS, MAX_TX_OUTPUTS,
+    MAX_TX_INPUTS, MAX_TX_OUTPUTS, MIN_DIFFICULTY_BITS,
 };
 use crate::crypto::{self, Hash, PublicKey, Signature};
 use rayon::prelude::*;
@@ -1000,16 +1000,19 @@ pub struct BlockHeader {
     pub timestamp: u64,
     /// Compact representation of the difficulty target.
     pub difficulty_bits: u32,
-    /// Nonce used to achieve the required proof-of-work.
-    pub nonce: u64,
+    /// Nonce used to achieve the required proof-of-work (32 bytes).
+    ///
+    /// A 32-byte nonce provides 2^256 possible values, making nonce exhaustion
+    /// impossible and eliminating the need for extraNonce mechanisms.
+    pub nonce: [u8; 32],
 }
 
 impl BlockHeader {
     /// The current block version.
     pub const CURRENT_VERSION: u32 = 1;
 
-    /// Header size in bytes.
-    pub const SIZE: usize = 152;
+    /// Header size in bytes (4 + 64 + 64 + 8 + 4 + 32 = 176).
+    pub const SIZE: usize = 176;
 
     /// Compute the hash of this block header.
     pub fn hash(&self) -> Hash {
@@ -1141,7 +1144,7 @@ impl Serialize for BlockHeader {
         buf.extend_from_slice(self.merkle_root.as_bytes());
         write_u64(buf, self.timestamp);
         write_u32(buf, self.difficulty_bits);
-        write_u64(buf, self.nonce);
+        buf.extend_from_slice(&self.nonce);
     }
 }
 
@@ -1152,7 +1155,7 @@ impl Deserialize for BlockHeader {
         let (merkle_root, data) = read_fixed_bytes::<64>(data)?;
         let (timestamp, data) = read_u64(data)?;
         let (difficulty_bits, data) = read_u32(data)?;
-        let (nonce, data) = read_u64(data)?;
+        let (nonce, data) = read_fixed_bytes::<32>(data)?;
         Ok((
             BlockHeader {
                 version,
@@ -1443,6 +1446,10 @@ fn is_dust(output: &TxOutput) -> bool {
     output.amount < dust_limit(&output.condition)
 }
 
+/// Number of blocks used to compute Median-Time-Past (MTP).
+/// Bitcoin uses 11 blocks; this provides resistance to timestamp manipulation.
+const MTP_BLOCK_COUNT: usize = 11;
+
 impl Blockchain {
     /// Create a new blockchain with the given genesis block.
     ///
@@ -1585,6 +1592,58 @@ impl Blockchain {
         }
     }
 
+    /// Calculate the Median-Time-Past (MTP) for a block.
+    ///
+    /// MTP is the median timestamp of the previous MTP_BLOCK_COUNT (11) blocks.
+    /// This is used instead of the previous block's timestamp to prevent
+    /// timestamp manipulation attacks (see BIP 113 in Bitcoin).
+    ///
+    /// A new block's timestamp must be strictly greater than the MTP.
+    fn median_time_past(&self, block_hash: Hash) -> u64 {
+        let mut timestamps = Vec::with_capacity(MTP_BLOCK_COUNT);
+        let mut current_hash = block_hash;
+
+        for _ in 0..MTP_BLOCK_COUNT {
+            if let Some(block) = self.blocks.get(&current_hash) {
+                timestamps.push(block.header.timestamp);
+                if current_hash == self.genesis_hash {
+                    break;
+                }
+                current_hash = block.header.prev_hash;
+            } else {
+                break;
+            }
+        }
+
+        if timestamps.is_empty() {
+            return 0;
+        }
+
+        timestamps.sort_unstable();
+        timestamps[timestamps.len() / 2]
+    }
+
+    /// Validate a block hash against hardcoded checkpoints.
+    ///
+    /// Returns Ok(()) if the block passes checkpoint validation, or an error
+    /// if the block hash doesn't match the expected checkpoint at this height.
+    fn validate_checkpoint(&self, height: u64, block_hash: Hash) -> Result<(), BlockchainError> {
+        for &(checkpoint_height, checkpoint_hash_hex) in CHECKPOINTS {
+            if height == checkpoint_height {
+                if let Some(expected_hash) = parse_hash_hex(checkpoint_hash_hex) {
+                    if block_hash != expected_hash {
+                        return Err(BlockchainError::CheckpointMismatch {
+                            height,
+                            expected: expected_hash,
+                            got: block_hash,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Calculate the expected difficulty for a block at a given height.
     ///
     /// This validates that a block has the correct difficulty based on its position
@@ -1634,6 +1693,9 @@ impl Blockchain {
 
         let scaled = (coefficient * actual_time) / target_time;
 
+        // Minimum coefficient threshold to maintain precision
+        const MIN_COEFFICIENT: u64 = 0x8000;
+
         let (new_exponent, new_coefficient) = if scaled == 0 {
             (1u32, 1u32)
         } else if scaled > 0x7FFFFF {
@@ -1646,11 +1708,19 @@ impl Blockchain {
             } else {
                 (new_exp, new_coef.min(0x7FFFFF))
             }
+        } else if scaled < MIN_COEFFICIENT && exponent > 3 {
+            // Coefficient too small - decrease exponent to maintain precision
+            let new_coef = (scaled * 256).min(0x7FFFFF);
+            let new_exp = exponent.saturating_sub(1);
+            (new_exp, new_coef as u32)
         } else {
             (exponent, scaled as u32)
         };
 
-        (new_exponent << 24) | new_coefficient
+        let new_bits = (new_exponent << 24) | new_coefficient;
+        // Enforce minimum difficulty floor (maximum target)
+        // A higher difficulty_bits value means an easier target, so we take the minimum
+        new_bits.min(MIN_DIFFICULTY_BITS)
     }
 
     /// Calculate the expected difficulty for a new block.
@@ -1708,6 +1778,11 @@ impl Blockchain {
 
         // Normalize: coefficient must fit in 24 bits (0x000000 to 0x7FFFFF to avoid
         // the high bit being set, which would be interpreted as negative)
+        //
+        // Minimum coefficient threshold (0x8000) ensures we maintain precision.
+        // If coefficient gets too small, we decrease exponent and multiply coefficient.
+        const MIN_COEFFICIENT: u64 = 0x8000; // Minimum for good precision
+
         let (new_exponent, new_coefficient) = if scaled == 0 {
             // Target is effectively zero (impossibly hard) - use minimum
             (1u32, 1u32)
@@ -1724,12 +1799,21 @@ impl Blockchain {
             } else {
                 (new_exp, new_coef.min(0x7FFFFF))
             }
+        } else if scaled < MIN_COEFFICIENT && exponent > 3 {
+            // Coefficient too small - decrease exponent (harder target) to maintain precision
+            // Each exponent decrement divides target by 256, so we multiply coefficient by 256
+            let new_coef = (scaled * 256).min(0x7FFFFF);
+            let new_exp = exponent.saturating_sub(1);
+            (new_exp, new_coef as u32)
         } else {
-            // Coefficient fits, keep same exponent
+            // Coefficient fits with good precision, keep same exponent
             (exponent, scaled as u32)
         };
 
-        (new_exponent << 24) | new_coefficient
+        let new_bits = (new_exponent << 24) | new_coefficient;
+        // Enforce minimum difficulty floor (maximum target)
+        // A higher difficulty_bits value means an easier target, so we take the minimum
+        new_bits.min(MIN_DIFFICULTY_BITS)
     }
 
     /// Verify signatures for a batch of transactions in parallel.
@@ -1963,14 +2047,15 @@ impl Blockchain {
             .ok_or(BlockchainError::UnknownPreviousBlock)?;
         let height = prev_height + 1;
 
-        // Get the previous block for timestamp validation
-        let prev_block = self
-            .blocks
-            .get(&block.header.prev_hash)
-            .ok_or(BlockchainError::UnknownPreviousBlock)?;
+        // Validate checkpoint if one exists at this height
+        self.validate_checkpoint(height, block_hash)?;
 
-        // Verify timestamp: must be strictly greater than previous block
-        if block.header.timestamp <= prev_block.header.timestamp {
+        // Verify timestamp using Median-Time-Past (MTP) rule (BIP 113)
+        // The block timestamp must be strictly greater than the MTP of the previous 11 blocks.
+        // This prevents timestamp manipulation attacks where miners game timestamps near
+        // difficulty adjustment boundaries.
+        let mtp = self.median_time_past(block.header.prev_hash);
+        if block.header.timestamp <= mtp {
             return Err(BlockchainError::InvalidTimestamp);
         }
 
@@ -2368,7 +2453,7 @@ pub fn create_genesis_block(
         merkle_root,
         timestamp,
         difficulty_bits,
-        nonce: 0,
+        nonce: [0u8; 32],
     };
 
     Block::new(header, vec![coinbase])
@@ -2577,7 +2662,7 @@ mod tests {
             merkle_root: crypto::hash(b"merkle"),
             timestamp: 1234567890,
             difficulty_bits: 0x1d00ffff,
-            nonce: 42,
+            nonce: [42u8; 32],
         };
 
         let bytes = header.to_bytes();
@@ -2600,7 +2685,7 @@ mod tests {
             merkle_root,
             timestamp: 1234567890,
             difficulty_bits: 0x1d00ffff,
-            nonce: 0,
+            nonce: [0u8; 32],
         };
 
         let block = Block::new(header, vec![tx]);
@@ -2669,7 +2754,7 @@ mod tests {
             merkle_root: Hash::from_bytes([0u8; 64]),
             timestamp: 0,
             difficulty_bits: bits,
-            nonce: 0,
+            nonce: [0u8; 32],
         };
 
         let target = header.target();
@@ -2690,7 +2775,7 @@ mod tests {
             merkle_root: Hash::from_bytes([0u8; 64]),
             timestamp: 0,
             difficulty_bits: easy_bits,
-            nonce: 0,
+            nonce: [0u8; 32],
         };
 
         // Should pass with any nonce since target is so high
@@ -2886,7 +2971,7 @@ mod tests {
                 merkle_root,
                 timestamp,
                 difficulty_bits: prev_block.header.difficulty_bits,
-                nonce: 0,
+                nonce: [0u8; 32],
             };
 
             let block = Block::new(header, vec![coinbase]);
@@ -2968,7 +3053,7 @@ mod tests {
             merkle_root,
             timestamp,
             difficulty_bits: prev_block.header.difficulty_bits,
-            nonce: 0,
+            nonce: [0u8; 32],
         };
 
         Block::new(header, all_txs)
@@ -3077,7 +3162,7 @@ mod tests {
             merkle_root,
             timestamp,
             difficulty_bits: 0x40ffffff,
-            nonce: 0,
+            nonce: [0u8; 32],
         };
         let genesis = Block::new(genesis_header, vec![coinbase.clone()]);
 
@@ -3099,7 +3184,7 @@ mod tests {
                 merkle_root: block_merkle_root,
                 timestamp,
                 difficulty_bits: prev_block.header.difficulty_bits,
-                nonce: 0,
+                nonce: [0u8; 32],
             };
 
             let block = Block::new(header, vec![miner_coinbase]);

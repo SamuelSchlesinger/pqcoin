@@ -42,8 +42,8 @@ pub struct BlockInfo {
     pub timestamp: u64,
     /// Difficulty bits.
     pub difficulty: u32,
-    /// Nonce.
-    pub nonce: u64,
+    /// Nonce (hex-encoded 32 bytes).
+    pub nonce: String,
     /// Number of transactions.
     pub tx_count: usize,
     /// Transaction IDs (hex).
@@ -185,7 +185,7 @@ fn block_to_info(block: &Block, height: u64) -> BlockInfo {
         merkle_root: block.header.merkle_root.to_hex(),
         timestamp: block.header.timestamp,
         difficulty: block.header.difficulty_bits,
-        nonce: block.header.nonce,
+        nonce: hex::encode(block.header.nonce),
         tx_count: block.transactions.len(),
         txids: block.transactions.iter().map(|tx| tx.txid().to_hex()).collect(),
     }
