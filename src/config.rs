@@ -12,9 +12,33 @@ use std::path::PathBuf;
 
 use crate::constants::{DEFAULT_PORT, MAX_OUTBOUND, MAX_PEERS};
 
+/// Network type (mainnet vs testnet).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum NetworkType {
+    /// Production mainnet.
+    #[default]
+    Mainnet,
+    /// LAN/WAN testnet for development and testing.
+    Testnet,
+}
+
+impl NetworkType {
+    /// Returns the default data directory suffix for this network.
+    pub fn data_dir_name(&self) -> &'static str {
+        match self {
+            NetworkType::Mainnet => ".pqcoin",
+            NetworkType::Testnet => ".pqcoin-testnet",
+        }
+    }
+}
+
 /// Main configuration structure for the pqcoin node.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
+    /// Which network to connect to (mainnet or testnet).
+    #[serde(default)]
+    pub network_type: NetworkType,
     /// Network configuration.
     #[serde(default)]
     pub network: NetworkConfig,
@@ -227,6 +251,11 @@ impl Config {
     /// Merge another config into this one.
     /// The other config's non-default values override this config's values.
     fn merge(&mut self, other: Config) {
+        // Network type
+        if other.network_type != NetworkType::Mainnet {
+            self.network_type = other.network_type;
+        }
+
         // Network
         if other.network.port != DEFAULT_PORT {
             self.network.port = other.network.port;
@@ -320,6 +349,10 @@ impl Config {
     pub fn sample() -> String {
         r#"# pqcoin configuration file
 
+# Network type: "mainnet" or "testnet"
+# Testnet uses lower difficulty and separate data directory
+network_type = "mainnet"
+
 [network]
 # Port to listen on for P2P connections
 port = 8333
@@ -373,6 +406,28 @@ bind = "127.0.0.1"
         if let Some(path) = datadir {
             self.storage.path = path.clone();
         }
+    }
+
+    /// Apply testnet flag override.
+    pub fn apply_testnet_override(&mut self, testnet: bool) {
+        if testnet {
+            self.network_type = NetworkType::Testnet;
+        }
+    }
+
+    /// Get the effective storage path, considering network type.
+    /// If storage path is the default, adjust it based on network type.
+    pub fn effective_storage_path(&self) -> PathBuf {
+        // If user explicitly set a custom path, use it
+        if self.storage.path != default_storage_path() {
+            return self.storage.path.clone();
+        }
+
+        // Otherwise, use network-specific default
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(self.network_type.data_dir_name())
+            .join("data")
     }
 }
 

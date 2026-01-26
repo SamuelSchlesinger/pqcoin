@@ -7,9 +7,10 @@ use clap::Parser;
 use pqcoin::api;
 use pqcoin::blockchain::{Address, Blockchain, create_genesis_block};
 use pqcoin::config::Config;
+use pqcoin::config::NetworkType;
 use pqcoin::constants::{
     DEFAULT_DIFFICULTY, HALVING_INTERVAL, INITIAL_REWARD, TEST_DIFFICULTY_INTERVAL,
-    TEST_TARGET_BLOCK_TIME,
+    TEST_TARGET_BLOCK_TIME, TESTNET_DIFFICULTY, TESTNET_GENESIS_TIMESTAMP,
 };
 use pqcoin::crypto::ml_dsa_87;
 use pqcoin::miner::{BackgroundMiner, MineResult, mine_block};
@@ -69,6 +70,10 @@ struct Cli {
     /// Print sample configuration and exit
     #[arg(long)]
     sample_config: bool,
+
+    /// Run on testnet (lower difficulty, separate data directory)
+    #[arg(long)]
+    testnet: bool,
 }
 
 /// Initialize logging with the given configuration.
@@ -117,6 +122,7 @@ async fn main() {
         cli.rpc_port,
         cli.rpc_bind.as_deref(),
     );
+    config.apply_testnet_override(cli.testnet);
     config.apply_datadir_override(cli.datadir.as_ref());
 
     // Initialize logging
@@ -177,16 +183,33 @@ async fn main() {
     // Create the genesis block (all nodes must use the same genesis)
     // Use a fixed address for genesis so all nodes have the same chain
     let genesis_address = Address::from_hash(pqcoin::crypto::hash(b"pqcoin genesis"));
-    let genesis = create_genesis_block(0, DEFAULT_DIFFICULTY, INITIAL_REWARD, genesis_address);
+    let (genesis_timestamp, genesis_difficulty) = match config.network_type {
+        NetworkType::Mainnet => (0, DEFAULT_DIFFICULTY),
+        NetworkType::Testnet => (TESTNET_GENESIS_TIMESTAMP, TESTNET_DIFFICULTY),
+    };
+    let genesis = create_genesis_block(
+        genesis_timestamp,
+        genesis_difficulty,
+        INITIAL_REWARD,
+        genesis_address,
+    );
+
+    tracing::info!(
+        network = ?config.network_type,
+        genesis_hash = %genesis.hash().to_hex()[..16],
+        difficulty = format!("{:#010x}", genesis_difficulty),
+        "using genesis block"
+    );
 
     // Initialize the blockchain with persistent storage
     // Use test constants for faster block times during development
+    let storage_path = config.effective_storage_path();
     tracing::info!(
-        storage_path = %config.storage.path.display(),
+        storage_path = %storage_path.display(),
         "opening blockchain storage"
     );
     let blockchain = match Blockchain::open(
-        &config.storage.path,
+        &storage_path,
         genesis,
         TEST_DIFFICULTY_INTERVAL,
         TEST_TARGET_BLOCK_TIME,

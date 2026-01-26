@@ -177,3 +177,17 @@ pub const TEST_DIFFICULTY_INTERVAL: u64 = 10;
 
 /// Target block time for testing (5 seconds).
 pub const TEST_TARGET_BLOCK_TIME: u64 = 5;
+
+// ============================================================================
+// Testnet Constants
+// ============================================================================
+
+/// Testnet genesis timestamp (2024-01-01 00:00:00 UTC).
+/// Fixed timestamp ensures all testnet nodes have identical genesis.
+pub const TESTNET_GENESIS_TIMESTAMP: u64 = 1704067200;
+
+/// Testnet difficulty - very low for fast block generation.
+/// Format: (exponent << 24) | coefficient
+/// 0x41ffffff = exponent 65 (max), coefficient 0xffffff
+/// This is the minimum difficulty, allowing very fast mining.
+pub const TESTNET_DIFFICULTY: u32 = MIN_DIFFICULTY_BITS;

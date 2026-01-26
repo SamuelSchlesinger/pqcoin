@@ -1,7 +1,7 @@
 ---
 title: "LAN Testnet Genesis Block"
 priority: 2
-status: planned
+status: completed
 tags: [network]
 dependencies: [004]
 ---

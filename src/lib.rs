@@ -81,6 +81,7 @@
 pub mod api;
 pub mod blockchain;
 pub mod config;
+pub use config::NetworkType;
 pub mod constants;
 pub mod crypto;
 pub mod mempool;
@@ -126,6 +127,9 @@ pub use constants::{
     MAX_TX_INPUTS,
     MAX_TX_OUTPUTS,
     TARGET_BLOCK_TIME,
+    // Testnet constants
+    TESTNET_DIFFICULTY,
+    TESTNET_GENESIS_TIMESTAMP,
 };
 
 pub use crypto::{Hash, PublicKey, SecretKey, Signature, hash, hash_many};
