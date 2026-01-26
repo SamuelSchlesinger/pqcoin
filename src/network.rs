@@ -70,7 +70,8 @@ pub use message::{
 };
 pub use peer::{HEADER_SIZE, MAX_MESSAGE_SIZE, Peer, PeerError, PeerHandle, PeerInfo, PeerState};
 pub use service::{
-    NetworkConfig, NetworkError, NetworkEvent, NetworkService, NetworkState, PeerCommand,
+    ConnectedPeerInfo, NetworkConfig, NetworkError, NetworkEvent, NetworkService, NetworkState,
+    PeerCommand,
 };
 pub use sync::{SyncError, SyncManager, SyncState};
 

@@ -68,6 +68,10 @@ pub struct PeerInfo {
     pub id: u64,
     /// Peer address.
     pub addr: String,
+    /// Peer's reported chain height.
+    pub height: u64,
+    /// Whether this is an outbound connection.
+    pub outbound: bool,
 }
 
 /// UTXO info response.
@@ -246,8 +250,16 @@ impl PqcoinRpcServer for RpcServerImpl {
     }
 
     async fn get_peer_info(&self) -> RpcResult<Vec<PeerInfo>> {
-        // Return empty for now - peer info requires network service access
-        Ok(vec![])
+        let peers = self.state.get_peer_info().await;
+        Ok(peers
+            .into_iter()
+            .map(|(id, info)| PeerInfo {
+                id,
+                addr: info.addr.to_string(),
+                height: info.height,
+                outbound: info.outbound,
+            })
+            .collect())
     }
 
     async fn send_raw_transaction(&self, tx_hex: String) -> RpcResult<String> {

@@ -11,7 +11,7 @@ mod rpc;
 
 use crate::blockchain::Blockchain;
 use crate::mempool::Mempool;
-use crate::network::NetworkService;
+use crate::network::{ConnectedPeerInfo, NetworkService, NetworkState};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
@@ -27,10 +27,10 @@ pub struct ApiState {
     pub blockchain: Arc<RwLock<Blockchain>>,
     /// Reference to the mempool.
     pub mempool: Arc<RwLock<Mempool>>,
+    /// Reference to the network state (for peer info queries).
+    pub network_state: Arc<RwLock<NetworkState>>,
     /// Metrics registry.
     pub metrics: Arc<MetricsRegistry>,
-    /// Connected peer count (updated externally).
-    pub peer_count: Arc<AtomicU64>,
     /// Total blocks mined counter.
     pub blocks_mined: Arc<AtomicU64>,
 }
@@ -42,24 +42,28 @@ impl ApiState {
         mempool: Arc<RwLock<Mempool>>,
         network: &NetworkService,
     ) -> Self {
-        let _ = network; // Used for peer count in future
         Self {
             blockchain,
             mempool,
+            network_state: network.state(),
             metrics: Arc::new(MetricsRegistry::new()),
-            peer_count: Arc::new(AtomicU64::new(0)),
             blocks_mined: Arc::new(AtomicU64::new(0)),
         }
     }
 
-    /// Update the peer count.
-    pub fn set_peer_count(&self, count: u64) {
-        self.peer_count.store(count, Ordering::Relaxed);
+    /// Get the current peer count from network state.
+    pub async fn get_peer_count(&self) -> u64 {
+        self.network_state.read().await.peer_count() as u64
     }
 
-    /// Get the current peer count.
-    pub fn get_peer_count(&self) -> u64 {
-        self.peer_count.load(Ordering::Relaxed)
+    /// Get information about all connected peers.
+    pub async fn get_peer_info(&self) -> Vec<(u64, ConnectedPeerInfo)> {
+        let state = self.network_state.read().await;
+        state
+            .peers
+            .iter()
+            .map(|(&id, info)| (id, info.clone()))
+            .collect()
     }
 
     /// Increment the blocks mined counter.

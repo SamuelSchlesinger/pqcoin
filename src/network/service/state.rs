@@ -34,7 +34,7 @@ pub(crate) enum PeerMessage {
 /// Shared state for the network service.
 pub struct NetworkState {
     /// Connected peers.
-    pub(crate) peers: HashMap<u64, PeerInfo>,
+    pub peers: HashMap<u64, ConnectedPeerInfo>,
     /// Addresses we're connected to (to avoid duplicates).
     pub(crate) connected_addrs: HashMap<SocketAddr, u64>,
     /// Channels to send commands to peer tasks.
@@ -95,13 +95,13 @@ impl NetworkState {
     }
 }
 
-/// Information about a connected peer.
+/// Basic information about a connected peer (for state tracking).
 #[derive(Clone)]
-pub(crate) struct PeerInfo {
+pub struct ConnectedPeerInfo {
     /// The peer's socket address.
-    pub(crate) addr: SocketAddr,
+    pub addr: SocketAddr,
     /// The peer's reported chain height.
-    pub(crate) height: u64,
+    pub height: u64,
     /// Whether this is an outbound connection.
-    pub(crate) outbound: bool,
+    pub outbound: bool,
 }

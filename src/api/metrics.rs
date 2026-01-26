@@ -106,15 +106,13 @@ async fn metrics_handler(State(state): State<ApiState>) -> impl IntoResponse {
     // Update gauges with current values
     let blockchain = state.blockchain.read().await;
     let mempool = state.mempool.read().await;
+    let peer_count = state.get_peer_count().await;
 
     state
         .metrics
         .blockchain_height
         .set(blockchain.height() as i64);
-    state
-        .metrics
-        .connected_peers
-        .set(state.get_peer_count() as i64);
+    state.metrics.connected_peers.set(peer_count as i64);
     state.metrics.mempool_size.set(mempool.len() as i64);
 
     drop(blockchain);

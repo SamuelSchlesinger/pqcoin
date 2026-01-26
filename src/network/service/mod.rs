@@ -14,7 +14,7 @@ mod state;
 
 // Re-export public types
 pub use events::{NetworkError, NetworkEvent};
-pub use state::{NetworkState, PeerCommand};
+pub use state::{ConnectedPeerInfo, NetworkState, PeerCommand};
 
 use crate::blockchain::{Block, Blockchain, Transaction};
 use crate::constants::{
@@ -27,7 +27,7 @@ use crate::network::peer::Peer;
 use crate::network::sync::{SyncManager, SyncState};
 
 use handlers::{broadcast, handle_peer_message, send_to_peer};
-use state::{PeerInfo, PeerMessage};
+use state::PeerMessage;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -518,7 +518,7 @@ impl NetworkService {
             let mut state = self.state.write().await;
             state.peers.insert(
                 peer_id,
-                PeerInfo {
+                ConnectedPeerInfo {
                     addr,
                     height: 0,
                     outbound,

@@ -32,11 +32,12 @@ async fn health_handler(State(state): State<ApiState>) -> impl IntoResponse {
     let mempool = state.mempool.read().await;
 
     let height = blockchain.height();
-    let peer_count = state.get_peer_count();
     let mempool_size = mempool.len();
 
     drop(blockchain);
     drop(mempool);
+
+    let peer_count = state.get_peer_count().await;
 
     // Consider node healthy if it has at least one peer or is running solo
     // Consider synced if we have peers and are not behind
