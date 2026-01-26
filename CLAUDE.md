@@ -205,13 +205,38 @@ See `.github/workflows/ci.yml` for details.
 
 ---
 
-## LAN Testnet Setup (Priority 2)
+## LAN Testnet Setup
 
 Testnet nodes:
-- `samuel@desktop` - Seed node, miner
-- `Samuels-MacBook-Pro` - Full node, wallet testing
+- `samuel@desktop` (100.123.199.53) - Seed node, miner
+- `Samuels-MacBook-Pro` (100.120.248.123) - Full node, wallet testing
 
-Connected via Tailscale. See `roadmap/004-tailscale-testnet-setup.md` for details.
+Connected via Tailscale.
+
+### Running the Testnet
+
+```bash
+# Desktop (miner)
+pqcoin --testnet --mine --rpc -C 100.120.248.123:8333
+
+# MacBook
+pqcoin --testnet --rpc -C 100.123.199.53:8333
+```
+
+### Multi-Machine Development Workflow
+
+**IMPORTANT:** When making code changes that need to be tested on both machines:
+
+1. Make changes on one machine
+2. **Commit and push BEFORE testing on the other machine**
+3. On the other machine: `git pull && cargo install --path .`
+4. Then run tests
+
+This avoids the situation where binaries are out of sync between machines.
+
+### Validation Script
+
+Run `./scripts/testnet-validation.sh` for guided testing of all scenarios.
 
 ---
 
