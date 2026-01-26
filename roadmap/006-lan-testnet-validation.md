@@ -1,7 +1,7 @@
 ---
 title: "LAN Testnet Validation"
 priority: 2
-status: in-progress
+status: completed
 tags: [testing, network]
 dependencies: [004, 005]
 ---
