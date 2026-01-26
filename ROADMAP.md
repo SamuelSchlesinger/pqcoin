@@ -28,9 +28,10 @@ Security and reliability improvements before any public deployment.
 
 | Status | Issue | Tags |
 |--------|-------|------|
-| ⬜ | [Prepare for Security Audit](roadmap/001-security-audit-prep.md) | security |
-| ⬜ | [Add Fuzzing Tests](roadmap/002-fuzzing-tests.md) | security, testing |
-| ⬜ | [Error Handling Audit](roadmap/003-error-handling-audit.md) | security |
+| ✅ | [Prepare for Security Audit](roadmap/001-security-audit-prep.md) | security |
+| ✅ | [Add Fuzzing Tests](roadmap/002-fuzzing-tests.md) | security, testing |
+| ✅ | [Error Handling Audit](roadmap/003-error-handling-audit.md) | security |
+| ⬜ | [Fix Fee Rate Bug - MIN_RELAY_FEE Units](roadmap/022-fix-fee-rate-bug---minrelayfee-units.md) | network, wallet |
 
 ---
 
@@ -44,9 +45,9 @@ Private testnet for development and initial testing.
 
 | Status | Issue | Tags | Dependencies |
 |--------|-------|------|--------------|
-| ⬜ | [Tailscale LAN Testnet Setup](roadmap/004-tailscale-testnet-setup.md) | infra, network | - |
-| ⬜ | [LAN Testnet Genesis Block](roadmap/005-lan-testnet-genesis.md) | network | 004 |
-| ⬜ | [LAN Testnet Validation](roadmap/006-lan-testnet-validation.md) | testing, network | 004, 005 |
+| ✅ | [Tailscale LAN Testnet Setup](roadmap/004-tailscale-testnet-setup.md) | infra, network | - |
+| ✅ | [LAN Testnet Genesis Block](roadmap/005-lan-testnet-genesis.md) | network | 004 |
+| ✅ | [LAN Testnet Validation](roadmap/006-lan-testnet-validation.md) | testing, network | 004, 005 |
 
 ---
 
@@ -56,9 +57,11 @@ Enhanced wallet functionality for better usability.
 
 | Status | Issue | Tags |
 |--------|-------|------|
-| ⬜ | [Multisig in CLI Wallet](roadmap/007-multisig-wallet.md) | wallet |
-| ⬜ | [HD Key Derivation](roadmap/008-hd-key-derivation.md) | wallet, security |
-| ⬜ | [Watch-Only Wallet Mode](roadmap/009-watch-only-mode.md) | wallet |
+| ✅ | [Multisig in CLI Wallet](roadmap/007-multisig-wallet.md) | wallet |
+| ✅ | [HD Key Derivation](roadmap/008-hd-key-derivation.md) | wallet, security |
+| ✅ | [Watch-Only Wallet Mode](roadmap/009-watch-only-mode.md) | wallet |
+| ⬜ | [HD Wallet Address Switching](roadmap/023-hd-wallet-address-switching.md) | wallet |
+| ⬜ | [Multisig Spend Command](roadmap/024-multisig-spend-command.md) | wallet |
 
 ---
 
@@ -117,14 +120,14 @@ Comprehensive documentation for users and developers.
 
 | Priority | Description | Issues | Completed |
 |----------|-------------|--------|-----------|
-| 1 | Production Hardening | 3 | 0 |
-| 2 | LAN Testnet | 3 | 0 |
-| 3 | Wallet Improvements | 3 | 0 |
+| 1 | Production Hardening | 4 | 3 |
+| 2 | LAN Testnet | 3 | 3 |
+| 3 | Wallet Improvements | 5 | 3 |
 | 4 | Performance | 3 | 0 |
 | 5 | WAN Testnet | 5 | 0 |
 | 6 | Light Clients | 1 | 0 |
 | 7 | Documentation | 3 | 0 |
-| **Total** | | **21** | **0** |
+| **Total** | | **24** | **9** |
 
 ---
 
@@ -140,12 +143,18 @@ The following work streams can run **concurrently**:
 │  Stream A: Production Hardening     Stream B: LAN Testnet           │
 │  ┌─────┐ ┌─────┐ ┌─────┐           ┌─────┐                          │
 │  │ 001 │ │ 002 │ │ 003 │           │ 004 │──→ 005 ──→ 006           │
-│  └─────┘ └─────┘ └─────┘           └─────┘                          │
+│  └──✅─┘ └──✅─┘ └──✅─┘           └──✅─┘     ✅        ✅           │
+│  ┌─────┐                                                            │
+│  │ 022 │ (fee rate bug)                                             │
+│  └─────┘                                                            │
 │                                                                      │
 │  Stream C: Wallet Features          Stream D: Performance           │
 │  ┌─────┐ ┌─────┐ ┌─────┐           ┌─────┐ ┌─────┐ ┌─────┐          │
 │  │ 007 │ │ 008 │ │ 009 │           │ 010 │ │ 011 │ │ 012 │          │
-│  └─────┘ └─────┘ └─────┘           └─────┘ └─────┘ └─────┘          │
+│  └──✅─┘ └──✅─┘ └──✅─┘           └─────┘ └─────┘ └─────┘          │
+│  ┌─────┐ ┌─────┐                                                    │
+│  │ 023 │ │ 024 │ (HD addr, multisig)                                │
+│  └─────┘ └─────┘                                                    │
 │                                                                      │
 │  Stream E: GCP Setup (infra only)   Stream F: Documentation         │
 │  ┌─────┐                            ┌─────┐ ┌─────┐                  │
