@@ -1,7 +1,7 @@
 ---
 title: "Fix getpeerinfo RPC - Connect to Network State"
 priority: 2
-status: in-progress
+status: completed
 tags: [network, api]
 dependencies: []
 ---

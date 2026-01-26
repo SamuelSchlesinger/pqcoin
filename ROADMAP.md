@@ -48,6 +48,7 @@ Private testnet for development and initial testing.
 | ✅ | [Tailscale LAN Testnet Setup](roadmap/004-tailscale-testnet-setup.md) | infra, network | - |
 | ✅ | [LAN Testnet Genesis Block](roadmap/005-lan-testnet-genesis.md) | network | 004 |
 | ✅ | [LAN Testnet Validation](roadmap/006-lan-testnet-validation.md) | testing, network | 004, 005 |
+| ✅ | [Fix getpeerinfo RPC](roadmap/025-fix-getpeerinfo-rpc---connect-to-network-state.md) | network, api | - |
 
 ---
 
@@ -121,13 +122,13 @@ Comprehensive documentation for users and developers.
 | Priority | Description | Issues | Completed |
 |----------|-------------|--------|-----------|
 | 1 | Production Hardening | 4 | 3 |
-| 2 | LAN Testnet | 3 | 3 |
+| 2 | LAN Testnet | 4 | 4 |
 | 3 | Wallet Improvements | 5 | 3 |
 | 4 | Performance | 3 | 0 |
 | 5 | WAN Testnet | 5 | 0 |
 | 6 | Light Clients | 1 | 0 |
 | 7 | Documentation | 3 | 0 |
-| **Total** | | **24** | **9** |
+| **Total** | | **25** | **10** |
 
 ---
 
