@@ -2,13 +2,18 @@
 
 use crate::blockchain::{Address, OutPoint, Transaction, TxInput, TxOutput, Witness};
 use crate::crypto::hash;
+use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 
 use super::keys::{KeyPair, WalletError};
 
 /// UTXO information for building transactions.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, SerdeSerialize, SerdeDeserialize)]
 pub struct UtxoInput {
     /// The outpoint referencing this UTXO.
+    #[serde(
+        serialize_with = "serialize_outpoint",
+        deserialize_with = "deserialize_outpoint"
+    )]
     pub outpoint: OutPoint,
     /// The amount in quanta.
     pub amount: u64,
@@ -16,6 +21,73 @@ pub struct UtxoInput {
     pub height: u64,
     /// Whether this is a coinbase output.
     pub is_coinbase: bool,
+}
+
+fn serialize_outpoint<S>(outpoint: &OutPoint, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    use serde::ser::SerializeStruct;
+    let mut state = serializer.serialize_struct("OutPoint", 2)?;
+    state.serialize_field("txid", &outpoint.txid.to_hex())?;
+    state.serialize_field("index", &outpoint.index)?;
+    state.end()
+}
+
+fn deserialize_outpoint<'de, D>(deserializer: D) -> Result<OutPoint, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{MapAccess, Visitor};
+    use std::fmt;
+
+    struct OutPointVisitor;
+
+    impl<'de> Visitor<'de> for OutPointVisitor {
+        type Value = OutPoint;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a map with txid and vout fields")
+        }
+
+        fn visit_map<M>(self, mut map: M) -> Result<OutPoint, M::Error>
+        where
+            M: MapAccess<'de>,
+        {
+            let mut txid: Option<String> = None;
+            let mut vout: Option<u32> = None;
+
+            while let Some(key) = map.next_key::<String>()? {
+                match key.as_str() {
+                    "txid" => txid = Some(map.next_value()?),
+                    "vout" => vout = Some(map.next_value()?),
+                    _ => {
+                        let _: serde::de::IgnoredAny = map.next_value()?;
+                    }
+                }
+            }
+
+            let txid_hex = txid.ok_or_else(|| serde::de::Error::missing_field("txid"))?;
+            let vout = vout.ok_or_else(|| serde::de::Error::missing_field("vout"))?;
+
+            let txid_bytes = hex::decode(&txid_hex)
+                .map_err(|e| serde::de::Error::custom(format!("invalid txid hex: {e}")))?;
+
+            if txid_bytes.len() != 64 {
+                return Err(serde::de::Error::custom("txid must be 64 bytes"));
+            }
+
+            let mut txid_arr = [0u8; 64];
+            txid_arr.copy_from_slice(&txid_bytes);
+
+            Ok(OutPoint::new(
+                crate::crypto::Hash::from_bytes(txid_arr),
+                vout,
+            ))
+        }
+    }
+
+    deserializer.deserialize_map(OutPointVisitor)
 }
 
 /// Transaction output specification.

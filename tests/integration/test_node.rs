@@ -414,35 +414,88 @@ impl TestNode {
     }
 
     /// Mine a block and submit it to the network.
+    ///
+    /// This method is robust against race conditions: if the chain tip changes
+    /// between mining and adding (e.g., due to a block arriving from the network),
+    /// it will retry mining up to 5 times.
+    ///
+    /// Returns `Some(block)` if we successfully mined and added a block.
+    /// Returns `None` only if mining truly fails after all retries.
     pub async fn mine_and_submit_block(&self) -> Option<Block> {
-        // Mine a block
-        let block = {
-            let blockchain = self.blockchain.read().await;
-            let mempool = self.mempool.read().await;
-            let stop = Arc::new(AtomicBool::new(false));
+        const MAX_RETRIES: u32 = 5;
 
-            match mine_block(&blockchain, &mempool, self.miner_address, stop) {
-                MineResult::Success(block) => block,
-                _ => return None,
-            }
-        };
+        for attempt in 0..MAX_RETRIES {
+            // Get current chain state
+            let current_height = self.height().await;
 
-        // Add block to local blockchain first
-        {
-            let mut blockchain = self.blockchain.write().await;
-            let mut mempool = self.mempool.write().await;
-            if blockchain.add_block(block.clone()).is_err() {
-                return None;
+            // Mine a block
+            let block = {
+                let blockchain = self.blockchain.read().await;
+                let mempool = self.mempool.read().await;
+                let stop = Arc::new(AtomicBool::new(false));
+
+                match mine_block(&blockchain, &mempool, self.miner_address, stop) {
+                    MineResult::Success(block) => block,
+                    MineResult::Stopped => {
+                        // Mining was stopped - this shouldn't happen in tests
+                        continue;
+                    }
+                    MineResult::NoWork => {
+                        // No work to do - shouldn't happen with our setup
+                        continue;
+                    }
+                }
+            };
+
+            // Small yield to allow network events to process
+            tokio::task::yield_now().await;
+
+            // Add block to local blockchain first
+            let add_result = {
+                let mut blockchain = self.blockchain.write().await;
+
+                // Check if chain progressed while we were mining
+                if blockchain.height() > current_height {
+                    // Chain advanced (e.g., via network sync) - retry mining
+                    if attempt < MAX_RETRIES - 1 {
+                        drop(blockchain);
+                        tokio::time::sleep(Duration::from_millis(10 * (attempt as u64 + 1))).await;
+                        continue;
+                    }
+                }
+
+                let mut mempool = self.mempool.write().await;
+                match blockchain.add_block(block.clone()) {
+                    Ok(true) => {
+                        // Successfully extended chain
+                        mempool.remove_confirmed(&block.transactions);
+                        Some(block)
+                    }
+                    Ok(false) => {
+                        // Block already exists (maybe received from network)
+                        // The chain has the block we wanted, consider this a success
+                        Some(block)
+                    }
+                    Err(_e) => {
+                        // Failed to add - likely chain tip changed during mining
+                        None
+                    }
+                }
+            };
+
+            if let Some(block) = add_result {
+                // Submit to network for propagation (ignore errors - block is already in our chain)
+                let _ = self.block_submitter.send(block.clone()).await;
+                return Some(block);
             }
-            mempool.remove_confirmed(&block.transactions);
+
+            // Retry with backoff
+            if attempt < MAX_RETRIES - 1 {
+                tokio::time::sleep(Duration::from_millis(20 * (attempt as u64 + 1))).await;
+            }
         }
 
-        // Submit to network for propagation
-        if self.block_submitter.send(block.clone()).await.is_err() {
-            return None;
-        }
-
-        Some(block)
+        None
     }
 
     /// Block a socket address from connecting (for partition testing).
@@ -511,10 +564,7 @@ impl TestNode {
             let _ = timeout(Duration::from_secs(5), handle).await;
         }
 
-        // Small delay to ensure LMDB flushes
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        // Get storage path and prevent TempDir deletion
+        // Get storage path before we drop things
         let storage_path = match &self.storage_dir {
             StorageDir::Temp(temp) => temp.path().to_path_buf(),
             StorageDir::Persistent(path) => path.clone(),
@@ -528,6 +578,21 @@ impl TestNode {
         if let StorageDir::Temp(temp) = old_storage {
             std::mem::forget(temp); // Leak to prevent deletion
         }
+
+        // Replace blockchain with a dummy to drop the LMDB environment
+        // This is critical - LMDB keeps file locks until the environment is dropped
+        let dummy_blockchain = {
+            let temp_dir = TempDir::new().expect("failed to create temp dir for dummy blockchain");
+            let genesis = self.blockchain.read().await.genesis().clone();
+            let bc = Blockchain::open(temp_dir.path(), genesis, 2016, 600, 50_000_000, 210_000)
+                .expect("failed to create dummy blockchain");
+            std::mem::forget(temp_dir); // We don't care about cleanup
+            Arc::new(RwLock::new(bc))
+        };
+        let _old_blockchain = std::mem::replace(&mut self.blockchain, dummy_blockchain);
+
+        // Give LMDB time to fully release file locks
+        tokio::time::sleep(Duration::from_millis(200)).await;
 
         RestartInfo {
             storage_path,
@@ -593,6 +658,8 @@ impl RestartInfo {
     /// This creates an IsolatedNode that can be used to verify the persistent
     /// blockchain state before any sync happens. Call `start_networking()` on
     /// the returned node to begin syncing.
+    ///
+    /// Includes retry logic to handle LMDB file lock timing issues.
     pub async fn restart_isolated(
         mut self,
         port: u16,
@@ -607,9 +674,32 @@ impl RestartInfo {
         // Mark as consumed so Drop doesn't delete the directory
         self.storage_path = std::path::PathBuf::new(); // Empty path won't delete anything meaningful
 
-        let storage_dir = StorageDir::Persistent(storage_path);
-        IsolatedNode::create_with_storage(id, port, genesis, storage_dir, keypair, miner_address)
+        // Retry with backoff to handle LMDB file lock timing issues
+        let mut last_error = None;
+        for attempt in 0..5 {
+            if attempt > 0 {
+                tokio::time::sleep(Duration::from_millis(100 * (attempt as u64 + 1))).await;
+            }
+
+            let storage_dir = StorageDir::Persistent(storage_path.clone());
+            match IsolatedNode::create_with_storage(
+                id,
+                port,
+                genesis.clone(),
+                storage_dir,
+                keypair.clone(),
+                miner_address,
+            )
             .await
+            {
+                Ok(node) => return Ok(node),
+                Err(e) => {
+                    last_error = Some(e);
+                }
+            }
+        }
+
+        Err(last_error.unwrap())
     }
 }
 

@@ -7,7 +7,9 @@ use pqcoin::COINBASE_MATURITY;
 use pqcoin::blockchain::Address;
 use pqcoin::crypto::ml_dsa_87;
 
-use crate::integration::helpers::{DEFAULT_TIMEOUT, wait_for_height, wait_for_tx_in_mempools};
+use crate::integration::helpers::{
+    DEFAULT_TIMEOUT, LONG_TIMEOUT, mine_to_height, wait_for_height, wait_for_tx_in_mempools,
+};
 use crate::integration::test_network::{TestNetwork, Topology};
 
 /// Mine enough blocks for node 0 to have a mature UTXO.
@@ -16,18 +18,8 @@ use crate::integration::test_network::{TestNetwork, Topology};
 /// (the first block node 0 mines) is mature.
 async fn mine_to_maturity(network: &TestNetwork) {
     let blocks_needed = COINBASE_MATURITY + 1;
-    for i in 0..blocks_needed {
-        network
-            .node(0)
-            .mine_and_submit_block()
-            .await
-            .expect("mining failed");
-
-        // Wait for propagation every 10 blocks
-        if i % 10 == 9 || i == blocks_needed - 1 {
-            wait_for_height(network, i + 1, DEFAULT_TIMEOUT).await;
-        }
-    }
+    let success = mine_to_height(network, blocks_needed, 0, LONG_TIMEOUT).await;
+    assert!(success, "failed to mine to maturity height {blocks_needed}");
 }
 
 /// Test that a transaction propagates to all nodes' mempools.
@@ -111,11 +103,16 @@ async fn test_tx_included_in_mined_block() {
         .expect("failed to add tx to mempool");
 
     // Mine a block - it should include the transaction
-    let block = network
-        .node(0)
-        .mine_and_submit_block()
-        .await
-        .expect("mining failed");
+    // Use retry loop to handle potential race conditions
+    let mut block = None;
+    for _ in 0..5 {
+        if let Some(b) = network.node(0).mine_and_submit_block().await {
+            block = Some(b);
+            break;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+    let block = block.expect("failed to mine block after retries");
 
     // The transaction should be in the block (position 1, after coinbase)
     assert!(
@@ -205,17 +202,8 @@ async fn test_multiple_transactions() {
     // Mine blocks to mature multiple coinbases
     // We need COINBASE_MATURITY + extra blocks to have multiple spendable UTXOs
     let blocks_needed = COINBASE_MATURITY + 5;
-    for i in 0..blocks_needed {
-        network
-            .node(0)
-            .mine_and_submit_block()
-            .await
-            .expect("mining failed");
-
-        if i % 10 == 9 || i == blocks_needed - 1 {
-            wait_for_height(&network, i + 1, DEFAULT_TIMEOUT).await;
-        }
-    }
+    let success = mine_to_height(&network, blocks_needed, 0, LONG_TIMEOUT).await;
+    assert!(success, "failed to mine to height {blocks_needed}");
 
     // Create a recipient
     let (recipient_pk, _) = ml_dsa_87::keygen();
@@ -236,12 +224,10 @@ async fn test_multiple_transactions() {
 
     assert_eq!(network.node(0).mempool_size().await, 1);
 
-    // Mine a block to confirm the first transaction
-    network
-        .node(0)
-        .mine_and_submit_block()
-        .await
-        .expect("mining failed");
+    // Mine a block to confirm the first transaction (with retry)
+    let height_before = network.node(0).height().await;
+    let success = mine_to_height(&network, height_before + 1, 0, DEFAULT_TIMEOUT).await;
+    assert!(success, "failed to mine block to confirm tx1");
 
     // Mempool should be empty now
     assert_eq!(

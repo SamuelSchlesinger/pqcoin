@@ -1,7 +1,7 @@
 ---
 title: "HD Key Derivation"
 priority: 3
-status: planned
+status: completed
 tags: [wallet, security]
 dependencies: []
 ---

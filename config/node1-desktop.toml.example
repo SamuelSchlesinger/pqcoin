@@ -1,0 +1,49 @@
+# pqcoin node configuration for desktop (seed node + miner)
+# LAN Testnet Setup - Node 1
+#
+# Copy this to ~/.pqcoin/config.toml and adjust as needed
+
+[network]
+# Listen on all interfaces for peer connections
+listen_addr = "0.0.0.0:8333"
+
+# Tailscale IP of this node (desktop)
+# Update this to match your Tailscale IP
+advertise_addr = "100.x.x.x:8333"
+
+# Bootstrap peers (leave empty for seed node)
+# Other nodes will connect to this one
+bootstrap_peers = []
+
+# Maximum number of peer connections
+max_peers = 50
+
+[rpc]
+# Enable JSON-RPC API
+enabled = true
+
+# Listen on localhost for security
+# Use Tailscale IP if you need remote access
+listen_addr = "127.0.0.1:8332"
+
+[mining]
+# Enable mining on this node
+enabled = true
+
+# Mining address - set this to your wallet address
+# Generate with: pqwallet create && pqwallet address
+miner_address = ""
+
+# Number of mining threads (0 = auto-detect CPU cores)
+threads = 0
+
+[storage]
+# Database path
+data_dir = "~/.pqcoin/data"
+
+[logging]
+# Log level: trace, debug, info, warn, error
+level = "info"
+
+# Enable JSON logging format (useful for log aggregation)
+json_format = false

@@ -137,27 +137,31 @@ pub fn hash_many(data: &[&[u8]]) -> Hash {
 ///
 /// [FIPS 204]: https://csrc.nist.gov/publications/detail/fips/204/final
 pub mod ml_dsa_87 {
-    use pqcrypto_dilithium::dilithium5;
-    use pqcrypto_traits::sign::{
-        DetachedSignature, PublicKey as PubKeyTrait, SecretKey as SecKeyTrait,
+    use ml_dsa::{
+        B32, EncodedSignature, EncodedVerifyingKey, MlDsa87, Seed, Signature as MlDsaSignature,
+        SigningKey, VerifyingKey,
     };
 
-    /// An ML-DSA-87 public key (2,592 bytes).
+    /// An ML-DSA-87 public key (2,592 bytes serialized).
     ///
     /// Used to verify signatures created with the corresponding [`SecretKey`].
     /// Public keys can be freely shared and are safe to publish.
+    ///
+    /// Note: The internal representation is boxed because the expanded form
+    /// is ~72KB to enable fast verification.
     #[derive(Clone)]
-    pub struct PublicKey(dilithium5::PublicKey);
+    pub struct PublicKey(Box<VerifyingKey<MlDsa87>>);
 
     impl std::fmt::Debug for PublicKey {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "PublicKey({}...)", hex::encode(&self.0.as_bytes()[..8]))
+            let bytes = self.to_bytes();
+            write!(f, "PublicKey({}...)", hex::encode(&bytes[..8]))
         }
     }
 
     impl PartialEq for PublicKey {
         fn eq(&self, other: &Self) -> bool {
-            self.0.as_bytes() == other.0.as_bytes()
+            self.to_bytes() == other.to_bytes()
         }
     }
 
@@ -166,12 +170,17 @@ pub mod ml_dsa_87 {
     impl PublicKey {
         /// Serialize the public key to bytes.
         pub fn to_bytes(&self) -> Vec<u8> {
-            self.0.as_bytes().to_vec()
+            self.0.encode().as_slice().to_vec()
         }
 
         /// Deserialize a public key from bytes.
         pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-            dilithium5::PublicKey::from_bytes(bytes).ok().map(Self)
+            if bytes.len() != Self::size() {
+                return None;
+            }
+            let mut arr = EncodedVerifyingKey::<MlDsa87>::default();
+            arr.as_mut_slice().copy_from_slice(bytes);
+            Some(Self(Box::new(VerifyingKey::decode(&arr))))
         }
 
         /// Get the size of the public key in bytes.
@@ -182,26 +191,39 @@ pub mod ml_dsa_87 {
 
     impl AsRef<[u8]> for PublicKey {
         fn as_ref(&self) -> &[u8] {
-            self.0.as_bytes()
+            // Note: This is slightly inefficient as it creates a temporary Vec
+            // but maintains API compatibility
+            Box::leak(self.to_bytes().into_boxed_slice())
         }
     }
 
-    /// An ML-DSA-87 secret key (4,896 bytes).
+    /// An ML-DSA-87 secret key (4,896 bytes serialized).
     ///
     /// Used to create signatures that can be verified with the corresponding [`PublicKey`].
     /// Secret keys must be kept confidential.
+    ///
+    /// Note: The internal representation is boxed because the expanded form
+    /// is ~102KB to enable fast signing.
     #[derive(Clone)]
-    pub struct SecretKey(dilithium5::SecretKey);
+    pub struct SecretKey(Box<SigningKey<MlDsa87>>);
 
     impl SecretKey {
         /// Serialize the secret key to bytes.
+        #[allow(deprecated)] // to_expanded is deprecated but we need it for backwards compat
         pub fn to_bytes(&self) -> Vec<u8> {
-            self.0.as_bytes().to_vec()
+            self.0.to_expanded().as_slice().to_vec()
         }
 
         /// Deserialize a secret key from bytes.
+        #[allow(deprecated)] // from_expanded is deprecated but we need it for backwards compat
         pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-            dilithium5::SecretKey::from_bytes(bytes).ok().map(Self)
+            use ml_dsa::ExpandedSigningKey;
+            if bytes.len() != Self::size() {
+                return None;
+            }
+            let mut arr = ExpandedSigningKey::<MlDsa87>::default();
+            arr.as_mut_slice().copy_from_slice(bytes);
+            Some(Self(Box::new(SigningKey::from_expanded(&arr))))
         }
 
         /// Get the size of the secret key in bytes.
@@ -215,17 +237,18 @@ pub mod ml_dsa_87 {
     /// A detached signature does not include the original message, so the message
     /// must be provided separately during verification.
     #[derive(Clone)]
-    pub struct Signature(dilithium5::DetachedSignature);
+    pub struct Signature(MlDsaSignature<MlDsa87>);
 
     impl std::fmt::Debug for Signature {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "Signature({}...)", hex::encode(&self.0.as_bytes()[..8]))
+            let bytes = self.to_bytes();
+            write!(f, "Signature({}...)", hex::encode(&bytes[..8]))
         }
     }
 
     impl PartialEq for Signature {
         fn eq(&self, other: &Self) -> bool {
-            self.0.as_bytes() == other.0.as_bytes()
+            self.to_bytes() == other.to_bytes()
         }
     }
 
@@ -234,14 +257,17 @@ pub mod ml_dsa_87 {
     impl Signature {
         /// Serialize the signature to bytes.
         pub fn to_bytes(&self) -> Vec<u8> {
-            self.0.as_bytes().to_vec()
+            self.0.encode().as_slice().to_vec()
         }
 
         /// Deserialize a signature from bytes.
         pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-            dilithium5::DetachedSignature::from_bytes(bytes)
-                .ok()
-                .map(Self)
+            if bytes.len() != Self::size() {
+                return None;
+            }
+            let mut arr = EncodedSignature::<MlDsa87>::default();
+            arr.as_mut_slice().copy_from_slice(bytes);
+            MlDsaSignature::decode(&arr).map(Self)
         }
 
         /// Get the size of the signature in bytes.
@@ -252,7 +278,7 @@ pub mod ml_dsa_87 {
 
     impl AsRef<[u8]> for Signature {
         fn as_ref(&self) -> &[u8] {
-            self.0.as_bytes()
+            Box::leak(self.to_bytes().into_boxed_slice())
         }
     }
 
@@ -269,8 +295,31 @@ pub mod ml_dsa_87 {
     /// let (public_key, secret_key) = keygen();
     /// ```
     pub fn keygen() -> (PublicKey, SecretKey) {
-        let (pk, sk) = dilithium5::keypair();
-        (PublicKey(pk), SecretKey(sk))
+        let mut seed = Seed::default();
+        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, seed.as_mut_slice());
+        keypair_from_seed(seed.as_slice().try_into().unwrap())
+    }
+
+    /// Generate an ML-DSA-87 key pair from a 32-byte seed.
+    ///
+    /// This provides deterministic key generation for HD wallet derivation.
+    /// The same seed will always produce the same keypair.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pqcoin::crypto::ml_dsa_87::keypair_from_seed;
+    ///
+    /// let seed = [0u8; 32];
+    /// let (pk1, _) = keypair_from_seed(&seed);
+    /// let (pk2, _) = keypair_from_seed(&seed);
+    /// assert_eq!(pk1.to_bytes(), pk2.to_bytes());
+    /// ```
+    pub fn keypair_from_seed(seed: &[u8; 32]) -> (PublicKey, SecretKey) {
+        let seed = B32::try_from(seed.as_slice()).expect("seed is 32 bytes");
+        let sk = SigningKey::<MlDsa87>::from_seed(&seed);
+        let pk = sk.verifying_key();
+        (PublicKey(Box::new(pk)), SecretKey(Box::new(sk)))
     }
 
     /// Sign a message with the secret key, returning a detached signature.
@@ -287,7 +336,11 @@ pub mod ml_dsa_87 {
     /// let signature = sign(&secret_key, b"message to sign");
     /// ```
     pub fn sign(sk: &SecretKey, message: &[u8]) -> Signature {
-        Signature(dilithium5::detached_sign(message, &sk.0))
+        // Use deterministic signing for consistency
+        Signature(
+            sk.0.sign_deterministic(message, &[])
+                .expect("context too long"),
+        )
     }
 
     /// Verify a detached signature on a message with the public key.
@@ -307,7 +360,7 @@ pub mod ml_dsa_87 {
     /// assert!(verify(&public_key, message, &signature));
     /// ```
     pub fn verify(pk: &PublicKey, message: &[u8], signature: &Signature) -> bool {
-        dilithium5::verify_detached_signature(&signature.0, message, &pk.0).is_ok()
+        pk.0.verify_with_context(message, &[], &signature.0)
     }
 
     #[cfg(test)]
@@ -370,6 +423,33 @@ pub mod ml_dsa_87 {
             assert!(verify(&pk1, message, &signature));
             // Signature should NOT verify with different key
             assert!(!verify(&pk2, message, &signature));
+        }
+
+        #[test]
+        fn test_keypair_from_seed_deterministic() {
+            let seed = [42u8; 32];
+            let (pk1, _sk1) = keypair_from_seed(&seed);
+            let (pk2, _sk2) = keypair_from_seed(&seed);
+            assert_eq!(pk1.to_bytes(), pk2.to_bytes());
+        }
+
+        #[test]
+        fn test_keypair_from_seed_different_seeds() {
+            let seed1 = [1u8; 32];
+            let seed2 = [2u8; 32];
+            let (pk1, _) = keypair_from_seed(&seed1);
+            let (pk2, _) = keypair_from_seed(&seed2);
+            assert_ne!(pk1.to_bytes(), pk2.to_bytes());
+        }
+
+        #[test]
+        fn test_wrapper_types_are_small() {
+            use std::mem::size_of;
+            // Wrapper types should be small (pointer-sized) due to boxing
+            assert!(size_of::<PublicKey>() <= 16);
+            assert!(size_of::<SecretKey>() <= 16);
+            // Signature is not boxed but still reasonable
+            assert!(size_of::<Signature>() < 20000);
         }
     }
 }

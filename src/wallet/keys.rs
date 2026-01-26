@@ -25,6 +25,8 @@ pub enum WalletError {
     Locked,
     /// RPC error.
     Rpc(String),
+    /// Cannot sign with watch-only wallet.
+    WatchOnly,
 }
 
 impl std::fmt::Display for WalletError {
@@ -35,6 +37,7 @@ impl std::fmt::Display for WalletError {
             WalletError::InvalidFormat(e) => write!(f, "invalid format: {e}"),
             WalletError::Locked => write!(f, "wallet is locked"),
             WalletError::Rpc(e) => write!(f, "RPC error: {e}"),
+            WalletError::WatchOnly => write!(f, "cannot sign with watch-only wallet"),
         }
     }
 }
@@ -160,6 +163,64 @@ impl EncryptedKey {
 
     /// Decrypt a secret key with a password.
     pub fn decrypt(&self, password: &str) -> Result<SecretKey, WalletError> {
+        let plaintext = self.decrypt_bytes(password)?;
+
+        // Convert to secret key
+        SecretKey::from_bytes(&plaintext)
+            .ok_or_else(|| WalletError::Crypto("invalid secret key".into()))
+    }
+
+    /// Encrypt arbitrary bytes with a password.
+    pub fn encrypt_bytes(data: &[u8], password: &str) -> Result<Self, WalletError> {
+        // Generate random salt and nonce
+        let mut salt_bytes = [0u8; 16];
+        let mut nonce_bytes = [0u8; 12];
+        rand::thread_rng().fill_bytes(&mut salt_bytes);
+        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+
+        // Derive encryption key from password using Argon2
+        let salt = SaltString::encode_b64(&salt_bytes)
+            .map_err(|e| WalletError::Crypto(format!("salt encoding failed: {e}")))?;
+
+        let argon2 = Argon2::default();
+        let password_hash = argon2
+            .hash_password(password.as_bytes(), &salt)
+            .map_err(|e| WalletError::Crypto(format!("key derivation failed: {e}")))?;
+
+        // Extract the 32-byte hash output
+        let hash_output = password_hash
+            .hash
+            .ok_or_else(|| WalletError::Crypto("no hash output".into()))?;
+        let hash_bytes = hash_output.as_bytes();
+
+        // Use first 32 bytes as AES-256 key
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&hash_bytes[..32]);
+
+        // Encrypt the data
+        let cipher = Aes256Gcm::new_from_slice(&key)
+            .map_err(|e| WalletError::Crypto(format!("cipher init failed: {e}")))?;
+
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let ciphertext = cipher
+            .encrypt(nonce, data)
+            .map_err(|e| WalletError::Crypto(format!("encryption failed: {e}")))?;
+
+        // Zeroize the key
+        key.zeroize();
+
+        Ok(Self {
+            ciphertext: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                &ciphertext,
+            ),
+            nonce: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, nonce_bytes),
+            salt: salt.to_string(),
+        })
+    }
+
+    /// Decrypt arbitrary bytes with a password.
+    pub fn decrypt_bytes(&self, password: &str) -> Result<Vec<u8>, WalletError> {
         use base64::Engine;
 
         // Decode base64 values
@@ -190,7 +251,7 @@ impl EncryptedKey {
         let mut key = [0u8; 32];
         key.copy_from_slice(&hash_bytes[..32]);
 
-        // Decrypt the secret key
+        // Decrypt
         let cipher = Aes256Gcm::new_from_slice(&key)
             .map_err(|e| WalletError::Crypto(format!("cipher init failed: {e}")))?;
 
@@ -202,9 +263,7 @@ impl EncryptedKey {
         // Zeroize the key
         key.zeroize();
 
-        // Convert to secret key
-        SecretKey::from_bytes(&plaintext)
-            .ok_or_else(|| WalletError::Crypto("invalid secret key".into()))
+        Ok(plaintext)
     }
 }
 

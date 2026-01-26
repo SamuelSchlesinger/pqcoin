@@ -1,7 +1,7 @@
 ---
 title: "Multisig in CLI Wallet"
 priority: 3
-status: planned
+status: completed
 tags: [wallet]
 dependencies: []
 ---

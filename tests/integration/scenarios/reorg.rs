@@ -3,7 +3,7 @@
 use std::time::Duration;
 use tokio::time::sleep;
 
-use crate::integration::helpers::{DEFAULT_TIMEOUT, wait_for_height};
+use crate::integration::helpers::{DEFAULT_TIMEOUT, mine_blocks_distributed, mine_to_height};
 use crate::integration::test_network::{TestNetwork, Topology};
 
 /// Test that nodes reorganize to a longer chain.
@@ -22,15 +22,9 @@ async fn test_reorg_to_longer_chain() {
         "all nodes should start at height 0"
     );
 
-    // Node 0 mines a block
-    network
-        .node(0)
-        .mine_and_submit_block()
-        .await
-        .expect("mining failed");
-
-    // Wait for propagation
-    wait_for_height(&network, 1, DEFAULT_TIMEOUT).await;
+    // Mine to height 1 from node 0
+    let success = mine_to_height(&network, 1, 0, DEFAULT_TIMEOUT).await;
+    assert!(success, "failed to mine to height 1");
 
     // Both nodes should agree
     assert!(
@@ -38,16 +32,9 @@ async fn test_reorg_to_longer_chain() {
         "nodes should agree on chain"
     );
 
-    // Continue mining to ensure chain builds correctly
-    for i in 1..3 {
-        network
-            .node(i % 2)
-            .mine_and_submit_block()
-            .await
-            .expect("mining failed");
-
-        wait_for_height(&network, (i + 1) as u64, DEFAULT_TIMEOUT).await;
-    }
+    // Mine to height 3 distributed across nodes
+    let success = mine_blocks_distributed(&network, 3, DEFAULT_TIMEOUT).await;
+    assert!(success, "failed to mine to height 3");
 
     // Final consensus check
     assert!(
@@ -65,23 +52,17 @@ async fn test_reorg_to_longer_chain() {
 /// reaches consensus.
 #[tokio::test]
 async fn test_competing_blocks_consensus() {
+    use crate::integration::helpers::mine_blocks_distributed;
+
     let network = TestNetwork::new(3, Topology::FullMesh)
         .await
         .expect("failed to create test network");
 
     sleep(Duration::from_millis(500)).await;
 
-    // Mine several blocks to build a chain
-    for i in 0..5 {
-        network
-            .node(i % 3)
-            .mine_and_submit_block()
-            .await
-            .expect("mining failed");
-
-        // Wait for propagation between each block
-        wait_for_height(&network, (i + 1) as u64, DEFAULT_TIMEOUT).await;
-    }
+    // Mine several blocks distributed across nodes
+    let success = mine_blocks_distributed(&network, 5, DEFAULT_TIMEOUT).await;
+    assert!(success, "failed to mine to height 5");
 
     // All nodes should eventually reach consensus
     assert!(
@@ -107,21 +88,10 @@ async fn test_chain_selection() {
 
     sleep(Duration::from_millis(500)).await;
 
-    // Mine blocks and verify chain grows correctly
+    // Mine blocks distributed across nodes to height 4
     let target_height = 4u64;
-
-    for i in 0..target_height {
-        let miner = (i as usize) % 2;
-        network
-            .node(miner)
-            .mine_and_submit_block()
-            .await
-            .expect("mining failed");
-
-        let height = i + 1;
-        let synced = wait_for_height(&network, height, DEFAULT_TIMEOUT).await;
-        assert!(synced, "failed to sync at height {height}");
-    }
+    let success = mine_blocks_distributed(&network, target_height, DEFAULT_TIMEOUT).await;
+    assert!(success, "failed to mine to height {target_height}");
 
     // Both nodes should have the same view
     assert!(

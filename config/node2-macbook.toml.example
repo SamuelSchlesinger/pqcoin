@@ -1,0 +1,45 @@
+# pqcoin node configuration for MacBook (full node + wallet testing)
+# LAN Testnet Setup - Node 2
+#
+# Copy this to ~/.pqcoin/config.toml and adjust as needed
+
+[network]
+# Listen on all interfaces for peer connections
+listen_addr = "0.0.0.0:8333"
+
+# Tailscale IP of this node (MacBook)
+# Update this to match your Tailscale IP
+advertise_addr = "100.x.x.x:8333"
+
+# Bootstrap to the desktop seed node
+# Update with the desktop's Tailscale IP
+bootstrap_peers = ["100.x.x.x:8333"]
+
+# Maximum number of peer connections
+max_peers = 50
+
+[rpc]
+# Enable JSON-RPC API (required for wallet)
+enabled = true
+
+# Listen on localhost for security
+listen_addr = "127.0.0.1:8332"
+
+[mining]
+# Disable mining on this node (desktop handles mining)
+enabled = false
+
+# If you want to test mining, uncomment and set address:
+# miner_address = ""
+# threads = 0
+
+[storage]
+# Database path
+data_dir = "~/.pqcoin/data"
+
+[logging]
+# Log level: trace, debug, info, warn, error
+level = "info"
+
+# Enable JSON logging format (useful for log aggregation)
+json_format = false

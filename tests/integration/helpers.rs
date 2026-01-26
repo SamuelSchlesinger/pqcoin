@@ -15,6 +15,9 @@ pub const TEST_DIFFICULTY: u32 = 0x40ffffff;
 /// Default timeout for test operations.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Long timeout for high-block-count operations (like mining to maturity).
+pub const LONG_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Short timeout for quick operations.
 pub const SHORT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -112,4 +115,114 @@ pub async fn wait_for_tx_in_mempools(
         POLL_INTERVAL,
     )
     .await
+}
+
+/// Mine blocks until the network reaches the target height.
+///
+/// This is a robust alternative to calling `mine_and_submit_block` directly.
+/// It handles race conditions by:
+/// 1. Checking if the target height is already reached
+/// 2. Mining from the specified node with retries
+/// 3. Waiting for propagation after each successful mine
+///
+/// Returns true if the target height was reached within the timeout.
+pub async fn mine_to_height(
+    network: &TestNetwork,
+    target_height: u64,
+    miner_index: usize,
+    timeout_duration: Duration,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout_duration;
+
+    loop {
+        // Check if we've already reached the target
+        let current_height = network.node(miner_index).height().await;
+        if current_height >= target_height {
+            // Wait for all nodes to sync
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            return wait_for_height(network, target_height, remaining).await;
+        }
+
+        // Check timeout
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+
+        // Try to mine a block
+        let result = network.node(miner_index).mine_and_submit_block().await;
+
+        if result.is_some() {
+            // Mining succeeded, wait a bit for propagation
+            sleep(Duration::from_millis(50)).await;
+        } else {
+            // Mining returned None - either failed or block already added via sync
+            // Check if height progressed anyway
+            let new_height = network.node(miner_index).height().await;
+            if new_height > current_height {
+                // Progress was made (possibly by another node), continue
+                sleep(Duration::from_millis(20)).await;
+            } else {
+                // No progress, wait a bit before retrying
+                sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+}
+
+/// Mine a sequence of blocks from alternating nodes to reach a target height.
+///
+/// This distributes mining across nodes to simulate realistic network behavior.
+/// Returns true if the target height was reached within the timeout.
+pub async fn mine_blocks_distributed(
+    network: &TestNetwork,
+    target_height: u64,
+    timeout_duration: Duration,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout_duration;
+    let node_count = network.node_count();
+
+    let mut current_miner = 0;
+
+    loop {
+        // Check if we've already reached the target on any node
+        let mut max_height = 0u64;
+        for i in 0..node_count {
+            let h = network.node(i).height().await;
+            if h > max_height {
+                max_height = h;
+            }
+        }
+
+        if max_height >= target_height {
+            // Wait for all nodes to sync to this height
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            return wait_for_height(network, target_height, remaining).await;
+        }
+
+        // Check timeout
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+
+        // Try to mine a block from the current miner
+        let result = network.node(current_miner).mine_and_submit_block().await;
+
+        if result.is_some() {
+            // Give network time to propagate
+            let next_height = max_height + 1;
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            let propagated =
+                wait_for_height(network, next_height, remaining.min(Duration::from_secs(5))).await;
+            if !propagated {
+                // Propagation timeout - continue anyway
+                sleep(Duration::from_millis(100)).await;
+            }
+        } else {
+            // Short delay before trying the next miner
+            sleep(Duration::from_millis(50)).await;
+        }
+
+        // Rotate to next miner
+        current_miner = (current_miner + 1) % node_count;
+    }
 }

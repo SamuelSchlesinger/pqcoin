@@ -1,7 +1,7 @@
 ---
 title: "Tailscale LAN Testnet Setup"
 priority: 2
-status: planned
+status: completed
 tags: [infra, network]
 dependencies: []
 ---

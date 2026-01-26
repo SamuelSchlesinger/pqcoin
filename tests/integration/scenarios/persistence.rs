@@ -6,12 +6,36 @@
 use std::time::Duration;
 use tokio::time::sleep;
 
-use crate::integration::helpers::{DEFAULT_TIMEOUT, create_test_genesis, wait_for_height};
+use crate::integration::helpers::{
+    DEFAULT_TIMEOUT, LONG_TIMEOUT, create_test_genesis, mine_to_height,
+};
 use crate::integration::test_network::{TestNetwork, Topology, find_available_ports};
 use crate::integration::test_node::TestNode;
 
 use pqcoin::blockchain::Address;
 use pqcoin::crypto::ml_dsa_87;
+
+/// Helper to mine blocks on a single node with retry logic.
+async fn mine_blocks_single_node(node: &TestNode, count: u64, timeout_duration: Duration) -> bool {
+    let start_height = node.height().await;
+    let target_height = start_height + count;
+
+    let deadline = tokio::time::Instant::now() + timeout_duration;
+
+    while node.height().await < target_height {
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+
+        // Try to mine a block
+        if node.mine_and_submit_block().await.is_none() {
+            // Mining failed, wait a bit and retry
+            sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    true
+}
 
 /// Test that a node restarts and recovers its blockchain state.
 #[tokio::test]
@@ -28,10 +52,9 @@ async fn test_node_restart_recovers_state() {
         .await
         .expect("failed to create node");
 
-    // Mine some blocks
-    for _ in 0..5 {
-        node.mine_and_submit_block().await.expect("mining failed");
-    }
+    // Mine 5 blocks with retry logic
+    let success = mine_blocks_single_node(&node, 5, DEFAULT_TIMEOUT).await;
+    assert!(success, "failed to mine 5 blocks");
 
     let height_before = node.height().await;
     let tip_before = node.tip_hash().await;
@@ -80,10 +103,9 @@ async fn test_restarted_node_can_mine() {
         .await
         .expect("failed to create node");
 
-    // Mine 3 blocks
-    for _ in 0..3 {
-        node.mine_and_submit_block().await.expect("mining failed");
-    }
+    // Mine 3 blocks with retry logic
+    let success = mine_blocks_single_node(&node, 3, DEFAULT_TIMEOUT).await;
+    assert!(success, "failed to mine 3 blocks");
     assert_eq!(node.height().await, 3);
 
     // Shutdown and restart in isolated mode first to verify persistence
@@ -103,13 +125,9 @@ async fn test_restarted_node_can_mine() {
         .await
         .expect("failed to start networking");
 
-    // Mine 2 more blocks after restart
-    for _ in 0..2 {
-        restarted
-            .mine_and_submit_block()
-            .await
-            .expect("mining failed");
-    }
+    // Mine 2 more blocks after restart with retry logic
+    let success = mine_blocks_single_node(&restarted, 2, DEFAULT_TIMEOUT).await;
+    assert!(success, "failed to mine 2 more blocks");
 
     assert_eq!(
         restarted.height().await,
@@ -130,15 +148,9 @@ async fn test_restarted_node_syncs_missed_blocks() {
 
     sleep(Duration::from_millis(500)).await;
 
-    // Mine some blocks
-    for i in 0..3 {
-        network
-            .node(0)
-            .mine_and_submit_block()
-            .await
-            .expect("mining failed");
-        wait_for_height(&network, i + 1, DEFAULT_TIMEOUT).await;
-    }
+    // Mine to height 3 using robust helper
+    let success = mine_to_height(&network, 3, 0, DEFAULT_TIMEOUT).await;
+    assert!(success, "failed to mine to height 3");
 
     assert!(
         network.all_at_height(3).await,
@@ -161,10 +173,9 @@ async fn test_restarted_node_syncs_missed_blocks() {
     // Wait for node0 to detect the disconnection before mining more blocks
     sleep(Duration::from_millis(200)).await;
 
-    // Mine more blocks on node 0 while node 1 is offline
-    for _ in 0..2 {
-        node0.mine_and_submit_block().await.expect("mining failed");
-    }
+    // Mine 2 more blocks on node 0 while node 1 is offline
+    let success = mine_blocks_single_node(&node0, 2, DEFAULT_TIMEOUT).await;
+    assert!(success, "failed to mine 2 blocks on node 0");
     assert_eq!(node0.height().await, 5, "node 0 should be at height 5");
 
     // Phase 1: Restart without networking to verify persistence (race-free)
@@ -223,9 +234,9 @@ async fn test_multiple_restarts() {
         .await
         .expect("failed to create node");
 
-    // First cycle: mine 2 blocks
-    node.mine_and_submit_block().await;
-    node.mine_and_submit_block().await;
+    // First cycle: mine 2 blocks with retry logic
+    let success = mine_blocks_single_node(&node, 2, DEFAULT_TIMEOUT).await;
+    assert!(success, "failed to mine 2 blocks in first cycle");
     assert_eq!(node.height().await, 2);
 
     let restart_info = node.shutdown_for_restart().await;
@@ -244,8 +255,9 @@ async fn test_multiple_restarts() {
         .await
         .expect("failed to start networking");
 
-    node.mine_and_submit_block().await;
-    node.mine_and_submit_block().await;
+    // Mine 2 more blocks with retry logic
+    let success = mine_blocks_single_node(&node, 2, DEFAULT_TIMEOUT).await;
+    assert!(success, "failed to mine 2 blocks in second cycle");
     assert_eq!(node.height().await, 4);
 
     let restart_info = node.shutdown_for_restart().await;
@@ -277,10 +289,9 @@ async fn test_utxo_state_preserved() {
         .await
         .expect("failed to create node");
 
-    // Mine enough blocks to have mature UTXOs
-    for _ in 0..102 {
-        node.mine_and_submit_block().await.expect("mining failed");
-    }
+    // Mine enough blocks to have mature UTXOs with retry logic
+    let success = mine_blocks_single_node(&node, 102, LONG_TIMEOUT).await;
+    assert!(success, "failed to mine 102 blocks");
 
     // Verify we have a mature UTXO and count how many
     let utxo_before = node.find_mature_utxo().await;

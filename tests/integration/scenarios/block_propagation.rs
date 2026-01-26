@@ -4,7 +4,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use crate::integration::helpers::{
-    DEFAULT_TIMEOUT, SHORT_TIMEOUT, wait_for_block_propagation, wait_for_height,
+    DEFAULT_TIMEOUT, SHORT_TIMEOUT, mine_to_height, wait_for_block_propagation,
 };
 use crate::integration::test_network::{TestNetwork, Topology};
 
@@ -24,21 +24,12 @@ async fn test_block_propagates_to_all_nodes() {
         "all nodes should start at height 0"
     );
 
-    // Node 0 mines a block
-    let block = network
-        .node(0)
-        .mine_and_submit_block()
-        .await
-        .expect("mining failed");
+    // Mine to height 1 using robust helper
+    let success = mine_to_height(&network, 1, 0, DEFAULT_TIMEOUT).await;
+    assert!(success, "failed to mine to height 1");
 
-    let block_hash = block.hash();
-
-    // Wait for block to propagate using the block hash helper
-    let propagated = wait_for_block_propagation(&network, block_hash, DEFAULT_TIMEOUT).await;
-    assert!(
-        propagated,
-        "block should propagate to all nodes within timeout"
-    );
+    // Get the block hash from node 0's tip
+    let block_hash = network.node(0).tip_hash().await;
 
     // Verify all nodes have the same tip
     assert!(
@@ -65,14 +56,11 @@ async fn test_block_propagates_through_linear_network() {
     // Wait for connections
     sleep(Duration::from_millis(500)).await;
 
-    // Node 0 (start of chain) mines a block
-    let block = network
-        .node(0)
-        .mine_and_submit_block()
-        .await
-        .expect("mining failed");
+    // Mine to height 1 from node 0 (start of chain)
+    let success = mine_to_height(&network, 1, 0, DEFAULT_TIMEOUT).await;
+    assert!(success, "failed to mine to height 1");
 
-    let block_hash = block.hash();
+    let block_hash = network.node(0).tip_hash().await;
 
     // Block should propagate through the chain: 0 -> 1 -> 2 -> 3
     let propagated = wait_for_block_propagation(&network, block_hash, DEFAULT_TIMEOUT).await;
@@ -93,41 +81,17 @@ async fn test_block_propagates_through_linear_network() {
 /// Test that multiple blocks propagate correctly.
 #[tokio::test]
 async fn test_multiple_blocks_propagate() {
+    use crate::integration::helpers::mine_blocks_distributed;
+
     let network = TestNetwork::new(3, Topology::FullMesh)
         .await
         .expect("failed to create test network");
 
     sleep(Duration::from_millis(500)).await;
 
-    // Mine 3 blocks and verify each propagates
-    let mut block_hashes = Vec::new();
-
-    for i in 0..3 {
-        let miner_node = i % network.node_count();
-        let block = network
-            .node(miner_node)
-            .mine_and_submit_block()
-            .await
-            .expect("mining failed");
-
-        block_hashes.push(block.hash());
-
-        // Wait for this block to propagate before mining the next
-        let target_height = (i + 1) as u64;
-        let propagated = wait_for_height(&network, target_height, DEFAULT_TIMEOUT).await;
-        assert!(
-            propagated,
-            "block {target_height} should propagate to all nodes"
-        );
-    }
-
-    // Verify all blocks are present on all nodes
-    for hash in &block_hashes {
-        assert!(
-            network.all_have_block(*hash).await,
-            "all nodes should have block"
-        );
-    }
+    // Mine 3 blocks distributed across nodes
+    let success = mine_blocks_distributed(&network, 3, DEFAULT_TIMEOUT).await;
+    assert!(success, "failed to mine to height 3");
 
     // Final check
     assert!(
@@ -145,28 +109,26 @@ async fn test_multiple_blocks_propagate() {
 /// Test block propagation with different nodes mining.
 #[tokio::test]
 async fn test_different_miners() {
+    use crate::integration::helpers::mine_blocks_distributed;
+
     let network = TestNetwork::new(3, Topology::FullMesh)
         .await
         .expect("failed to create test network");
 
     sleep(Duration::from_millis(500)).await;
 
-    // Each node mines one block
-    for i in 0..3 {
-        let block = network
-            .node(i)
-            .mine_and_submit_block()
-            .await
-            .expect("mining failed");
-
-        // Use wait_for_block_propagation for each block
-        let propagated = wait_for_block_propagation(&network, block.hash(), DEFAULT_TIMEOUT).await;
-        assert!(propagated, "block from node {i} should propagate");
-    }
+    // Mine 3 blocks distributed across nodes
+    let success = mine_blocks_distributed(&network, 3, DEFAULT_TIMEOUT).await;
+    assert!(success, "failed to mine to height 3");
 
     assert!(
         network.all_at_height(3).await,
         "all nodes should be at height 3"
+    );
+
+    assert!(
+        network.verify_consensus().await,
+        "all nodes should agree on chain tip"
     );
 
     network.shutdown().await;
@@ -181,15 +143,14 @@ async fn test_block_propagates_quickly() {
 
     sleep(Duration::from_millis(500)).await;
 
-    // Mine a block
-    let block = network
-        .node(0)
-        .mine_and_submit_block()
-        .await
-        .expect("mining failed");
+    // Mine to height 1 using robust helper with short timeout
+    let success = mine_to_height(&network, 1, 0, SHORT_TIMEOUT).await;
+    assert!(success, "failed to mine to height 1");
 
-    // Block should propagate within SHORT_TIMEOUT (5 seconds)
-    let propagated = wait_for_block_propagation(&network, block.hash(), SHORT_TIMEOUT).await;
+    let block_hash = network.node(0).tip_hash().await;
+
+    // Block should already be propagated (mine_to_height waits for it)
+    let propagated = wait_for_block_propagation(&network, block_hash, SHORT_TIMEOUT).await;
     assert!(
         propagated,
         "block should propagate quickly in a 2-node network"

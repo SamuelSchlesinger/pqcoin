@@ -1,7 +1,7 @@
 ---
 title: "Watch-Only Wallet Mode"
 priority: 3
-status: planned
+status: completed
 tags: [wallet]
 dependencies: []
 ---

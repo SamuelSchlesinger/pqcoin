@@ -155,18 +155,19 @@ async fn test_peer_connection_events() {
 /// Test that block events are received.
 #[tokio::test]
 async fn test_block_received_events() {
+    use crate::integration::helpers::{DEFAULT_TIMEOUT, mine_to_height};
+
     let mut network = TestNetwork::new(2, Topology::FullMesh)
         .await
         .expect("failed to create test network");
 
     sleep(Duration::from_millis(500)).await;
 
-    // Node 0 mines a block
-    let block = network
-        .node(0)
-        .mine_and_submit_block()
-        .await
-        .expect("mining failed");
+    // Mine to height 1 using robust helper
+    let success = mine_to_height(&network, 1, 0, DEFAULT_TIMEOUT).await;
+    assert!(success, "failed to mine to height 1");
+
+    let block_hash = network.node(0).tip_hash().await;
 
     // Wait for propagation
     sleep(Duration::from_millis(500)).await;
@@ -188,7 +189,7 @@ async fn test_block_received_events() {
     if let Some(NetworkEvent::NewBlock(received_block)) = block_events.first() {
         assert_eq!(
             received_block.hash(),
-            block.hash(),
+            block_hash,
             "received block should match mined block"
         );
     }
@@ -199,6 +200,8 @@ async fn test_block_received_events() {
 /// Test waiting for next event with timeout.
 #[tokio::test]
 async fn test_next_event_with_timeout() {
+    use crate::integration::helpers::{DEFAULT_TIMEOUT, mine_to_height};
+
     let mut network = TestNetwork::new(2, Topology::FullMesh)
         .await
         .expect("failed to create test network");
@@ -209,11 +212,8 @@ async fn test_next_event_with_timeout() {
     network.node_mut(1).drain_events();
 
     // Mine a block to generate an event
-    network
-        .node(0)
-        .mine_and_submit_block()
-        .await
-        .expect("mining failed");
+    let success = mine_to_height(&network, 1, 0, DEFAULT_TIMEOUT).await;
+    assert!(success, "failed to mine to height 1");
 
     // Wait for the next event on node 1
     let event = network.node_mut(1).next_event(Duration::from_secs(5)).await;
