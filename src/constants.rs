@@ -188,6 +188,6 @@ pub const TESTNET_GENESIS_TIMESTAMP: u64 = 1704067200;
 
 /// Testnet difficulty - very low for fast block generation.
 /// Format: (exponent << 24) | coefficient
-/// 0x41ffffff = exponent 65 (max), coefficient 0xffffff
-/// This is the minimum difficulty, allowing very fast mining.
-pub const TESTNET_DIFFICULTY: u32 = MIN_DIFFICULTY_BITS;
+/// 0x40ffffff = exponent 64, coefficient 0xffffff
+/// This gives an extremely easy target (only need first byte of hash < 0xff).
+pub const TESTNET_DIFFICULTY: u32 = 0x40ffffff;
