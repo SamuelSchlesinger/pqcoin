@@ -87,6 +87,45 @@ jobs:
       - name: Build release
         run: cargo build --release
 
+  fuzz:
+    name: Fuzz Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Fuzz block deserialize
+        run: cargo +nightly fuzz run fuzz_block_deserialize -- -max_total_time=60
+        working-directory: .
+
+      - name: Fuzz transaction deserialize
+        run: cargo +nightly fuzz run fuzz_transaction_deserialize -- -max_total_time=60
+        working-directory: .
+
+      - name: Fuzz message deserialize
+        run: cargo +nightly fuzz run fuzz_message_deserialize -- -max_total_time=60
+        working-directory: .
+
+      - name: Fuzz witness deserialize
+        run: cargo +nightly fuzz run fuzz_witness_deserialize -- -max_total_time=60
+        working-directory: .
+
+      - name: Fuzz locking condition
+        run: cargo +nightly fuzz run fuzz_locking_condition -- -max_total_time=60
+        working-directory: .
+
+      - name: Fuzz varint
+        run: cargo +nightly fuzz run fuzz_varint -- -max_total_time=60
+        working-directory: .
+
   roadmap:
     name: Validate Roadmap
     runs-on: ubuntu-latest

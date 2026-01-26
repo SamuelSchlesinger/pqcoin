@@ -53,6 +53,7 @@ pub struct NetworkConfig {
 impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
+            // COMPILE-TIME: "0.0.0.0:{port}" is always a valid socket address format.
             listen_addr: format!("0.0.0.0:{DEFAULT_PORT}").parse().unwrap(),
             max_peers: MAX_PEERS,
             max_outbound: MAX_OUTBOUND,
@@ -175,15 +176,18 @@ impl NetworkService {
         tracing::info!(addr = %self.local_addr.unwrap(), "listening for connections");
 
         // Take the peer message receiver
+        // INVARIANT: peer_msg_rx is Some until run() is called, then taken exactly once.
         let mut peer_msg_rx = self.peer_msg_rx.take().expect("run called twice");
 
         // Take the block submit receiver
+        // INVARIANT: block_submit_rx is Some until run() is called, then taken exactly once.
         let mut block_submit_rx = self.block_submit_rx.take().expect("run called twice");
 
         // Connect to seed peers and add them to addr_manager
         for addr in self.config.seed_peers.clone() {
             // Add seed peers to address manager
             {
+                // INVARIANT: SystemTime::now() is always after UNIX_EPOCH.
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
@@ -293,15 +297,18 @@ impl NetworkService {
         tracing::info!(addr = %self.local_addr.unwrap(), "listening for connections");
 
         // Take the peer message receiver
+        // INVARIANT: peer_msg_rx is Some until run() is called, then taken exactly once.
         let mut peer_msg_rx = self.peer_msg_rx.take().expect("run called twice");
 
         // Take the block submit receiver
+        // INVARIANT: block_submit_rx is Some until run() is called, then taken exactly once.
         let mut block_submit_rx = self.block_submit_rx.take().expect("run called twice");
 
         // Connect to seed peers and add them to addr_manager
         for addr in self.config.seed_peers.clone() {
             // Add seed peers to address manager
             {
+                // INVARIANT: SystemTime::now() is always after UNIX_EPOCH.
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
@@ -767,6 +774,7 @@ impl NetworkService {
 
     /// Send ping to all connected peers.
     async fn send_pings(&self) {
+        // INVARIANT: SystemTime::now() is always after UNIX_EPOCH.
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

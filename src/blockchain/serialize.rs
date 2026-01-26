@@ -127,7 +127,10 @@ pub(crate) fn read_u64(data: &[u8]) -> Result<(u64, &[u8]), DeserializeError> {
     Ok((value, &data[8..]))
 }
 
-pub(crate) fn read_var_int(data: &[u8]) -> Result<(u64, &[u8]), DeserializeError> {
+/// Read a variable-length integer from a byte slice.
+///
+/// Returns the integer value and the remaining bytes after the varint.
+pub fn read_var_int(data: &[u8]) -> Result<(u64, &[u8]), DeserializeError> {
     let (first, data) = read_u8(data)?;
     match first {
         0..=0xFC => Ok((first as u64, data)),

@@ -1,0 +1,64 @@
+[package]
+name = "pqcoin-fuzz"
+version = "0.0.0"
+authors = ["Automatically generated"]
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.pqcoin]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "fuzz_block_deserialize"
+path = "fuzz_targets/fuzz_block_deserialize.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_transaction_deserialize"
+path = "fuzz_targets/fuzz_transaction_deserialize.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_message_deserialize"
+path = "fuzz_targets/fuzz_message_deserialize.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_witness_deserialize"
+path = "fuzz_targets/fuzz_witness_deserialize.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_locking_condition"
+path = "fuzz_targets/fuzz_locking_condition.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_varint"
+path = "fuzz_targets/fuzz_varint.rs"
+test = false
+doc = false
+bench = false

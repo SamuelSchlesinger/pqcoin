@@ -65,6 +65,7 @@ pub fn mine_block(
     let prev_timestamp = prev_block.header.timestamp;
 
     // Ensure timestamp is strictly greater than previous block
+    // INVARIANT: SystemTime::now() is always after UNIX_EPOCH on any system where this code runs.
     let current_time = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -126,6 +127,7 @@ pub fn mine_block(
 
         // Every 100k hashes, update timestamp (ensuring it stays > prev_timestamp)
         if hash_count % 100_000 == 0 {
+            // INVARIANT: SystemTime::now() is always after UNIX_EPOCH.
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

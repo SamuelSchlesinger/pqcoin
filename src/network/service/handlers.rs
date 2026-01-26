@@ -207,6 +207,7 @@ async fn handle_addr(
         state_guard.peers.get(&peer_id).map(|p| p.addr)
     };
 
+    // INVARIANT: SystemTime::now() is always after UNIX_EPOCH.
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()

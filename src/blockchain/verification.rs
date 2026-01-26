@@ -134,6 +134,28 @@ pub(crate) fn verify_transaction(
 }
 
 /// Verify that a witness satisfies a locking condition.
+///
+/// # Security Properties
+///
+/// This function is critical for consensus security. It verifies that a transaction
+/// input is authorized to spend the referenced UTXO.
+///
+/// ## ML-DSA-87 Verification
+///
+/// SECURITY: The `crypto::ml_dsa_87::verify()` function uses the `pqcrypto-dilithium`
+/// crate which implements FIPS 204 (ML-DSA). The verification operation:
+///
+/// - Is constant-time with respect to the secret key (not applicable here, but the
+///   implementation is consistent)
+/// - May have variable timing based on the public key and message, which is acceptable
+///   as these are public values
+/// - Returns a boolean result, not distinguishing between different failure modes
+///
+/// ## Address Binding
+///
+/// SECURITY: The public key is hashed with SHA3-512 to derive the address. An attacker
+/// cannot substitute a different public key that hashes to the same address due to
+/// SHA3-512's collision resistance (256-bit security against collision attacks).
 fn verify_witness(
     condition: &LockingCondition,
     witness: &Witness,
@@ -147,11 +169,14 @@ fn verify_witness(
                 signature,
             },
         ) => {
-            // Verify the public key hashes to the address
+            // SECURITY: Verify public key binds to address before checking signature.
+            // This prevents signature malleability attacks where an attacker might
+            // provide a valid signature from a different key.
             if Address::from_public_key(public_key) != *address {
                 return Err(BlockchainError::InvalidWitness);
             }
-            // Verify the signature
+            // SECURITY: ML-DSA-87 signature verification. The message is already
+            // hashed (SHA3-512 of signing data), providing domain separation.
             if !crypto::ml_dsa_87::verify(public_key, message.as_bytes(), signature) {
                 return Err(BlockchainError::InvalidWitness);
             }

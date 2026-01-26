@@ -41,6 +41,21 @@ impl LmdbStorage {
         })?;
 
         // Open the LMDB environment
+        //
+        // SAFETY: The `heed` crate requires `unsafe` for `EnvOpenOptions::open()` because
+        // LMDB has specific requirements about file locking and memory-mapped I/O:
+        //
+        // 1. Only one process should open a given LMDB environment at a time with write access.
+        //    We ensure this by using a single `LmdbStorage` instance per node process.
+        //
+        // 2. The environment must not be opened multiple times in the same process.
+        //    The `Blockchain::open()` function is called once during node initialization.
+        //
+        // 3. Memory-mapped regions must not be accessed after the environment is closed.
+        //    The `Env` is stored in `LmdbStorage` and lives for the lifetime of the node.
+        //
+        // 4. The path must be a valid directory with appropriate permissions.
+        //    We create the directory above with `fs::create_dir_all()`.
         let env = unsafe {
             EnvOpenOptions::new()
                 .map_size(DEFAULT_MAP_SIZE)

@@ -130,6 +130,7 @@ impl Peer {
         local_height: u64,
     ) -> Self {
         // Generate random nonce for self-connection detection
+        // INVARIANT: SystemTime::now() is always after UNIX_EPOCH.
         let nonce = std::time::SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -203,6 +204,7 @@ impl Peer {
     ///
     /// Build our version message.
     fn build_version_message(&self) -> Message {
+        // INVARIANT: SystemTime::now() is always after UNIX_EPOCH.
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()

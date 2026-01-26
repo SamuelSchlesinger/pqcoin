@@ -80,7 +80,7 @@ pub use input::TxInput;
 pub use locking::LockingCondition;
 pub use outpoint::OutPoint;
 pub use output::TxOutput;
-pub use serialize::{Deserialize, DeserializeError, Serialize};
+pub use serialize::{Deserialize, DeserializeError, Serialize, read_var_int};
 pub use transaction::Transaction;
 pub use utxo::Utxo;
 pub use witness::Witness;

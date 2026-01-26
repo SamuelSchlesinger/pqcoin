@@ -44,9 +44,21 @@ pqcoin is a post-quantum cryptocurrency using NIST-standardized cryptography:
 1. Run `./scripts/roadmap-status.sh` to see available work
 2. Pick an issue where all dependencies are complete (shown as ⬜ not 🚫)
 3. Run `./scripts/roadmap-claim.sh NNN` to mark it in-progress
-4. Read the full issue file in `roadmap/` before implementing
+4. Read the full issue file in `roadmap/NNN-*.md` before implementing
 5. Implement the changes
 6. Run `./scripts/roadmap-complete.sh NNN` when done
+
+**Important:** You MUST claim an issue before completing it. The scripts enforce this. If implementing multiple issues, claim each one before starting work:
+
+```bash
+# Claim before implementing
+./scripts/roadmap-claim.sh 001
+# ... implement issue 001 ...
+./scripts/roadmap-complete.sh 001
+
+# Or chain them for quick completion
+./scripts/roadmap-claim.sh 001 && ./scripts/roadmap-complete.sh 001
+```
 
 ### Dependency Rules
 
@@ -131,6 +143,20 @@ This is cryptocurrency software. Be paranoid:
 - **Validate before processing** - Malformed data must not crash the node
 - **Constant-time comparisons** for sensitive data where applicable
 - **Document security assumptions** in comments
+
+### Documentation Style
+
+**Be helpful, not pedantic.** Only add comments that help future readers understand non-obvious design decisions.
+
+**Good comments** (explain why, not what):
+- `// Genesis is inserted in new() and never removed` - explains invariant
+- `// SECURITY: Verify address binds to key before checking signature` - security rationale
+
+**Avoid these** (stating the obvious):
+- `// INVARIANT: SystemTime::now() is always after UNIX_EPOCH` - everyone knows this
+- `// This parses the port from the config` - the code already says this
+
+See `docs/error-handling-audit.md` for the codebase's `unwrap()`/`expect()` philosophy.
 
 ### Testing
 

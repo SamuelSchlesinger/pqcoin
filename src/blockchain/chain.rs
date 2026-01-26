@@ -232,12 +232,26 @@ impl Blockchain {
     }
 
     /// Get the genesis block.
+    ///
+    /// # Panics
+    ///
+    /// This function never panics in practice because the genesis block is
+    /// always inserted during Blockchain construction.
     pub fn genesis(&self) -> &Block {
+        // INVARIANT: Genesis block is inserted in Blockchain::new() and never removed.
+        // The blocks map always contains genesis_hash.
         self.blocks.get(&self.genesis_hash).unwrap()
     }
 
     /// Get the current chain tip (best block).
+    ///
+    /// # Panics
+    ///
+    /// This function never panics in practice because the tip always points
+    /// to a valid block in the chain.
     pub fn tip(&self) -> &Block {
+        // INVARIANT: tip is initialized to genesis_hash in Blockchain::new() and is
+        // only updated to valid block hashes in apply_block(). The tip always exists.
         self.blocks.get(&self.tip).unwrap()
     }
 

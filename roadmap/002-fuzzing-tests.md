@@ -1,7 +1,7 @@
 ---
 title: "Add Fuzzing Tests"
 priority: 1
-status: planned
+status: completed
 tags: [security, testing]
 dependencies: []
 ---

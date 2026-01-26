@@ -98,6 +98,7 @@ impl AddressManager {
         }
 
         // Check for stale addresses
+        // INVARIANT: SystemTime::now() is always after UNIX_EPOCH.
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -159,6 +160,7 @@ impl AddressManager {
             }
 
             // Update last seen time
+            // INVARIANT: SystemTime::now() is always after UNIX_EPOCH.
             entry.last_seen = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -177,6 +179,7 @@ impl AddressManager {
 
         if let Some(entry) = self.addrs.get_mut(addr) {
             entry.attempt_count += 1;
+            // INVARIANT: SystemTime::now() is always after UNIX_EPOCH.
             entry.last_attempt = Some(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -276,6 +279,7 @@ impl AddressManager {
     ///
     /// Prefers recently seen addresses.
     pub fn get_addrs_for_relay(&self, max_count: usize) -> Vec<TimestampedAddr> {
+        // INVARIANT: SystemTime::now() is always after UNIX_EPOCH.
         let current_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
