@@ -35,7 +35,7 @@ fn test_blockchain() -> (
         let reward = chain.block_reward(height);
 
         let coinbase = Transaction::coinbase(height, reward, address);
-        let merkle_root = Block::compute_merkle_root(&[coinbase.clone()]);
+        let merkle_root = Block::compute_merkle_root(std::slice::from_ref(&coinbase));
 
         let header = BlockHeader {
             version: BlockHeader::CURRENT_VERSION,

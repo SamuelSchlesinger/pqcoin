@@ -17,7 +17,7 @@ pub fn create_genesis_block(
     recipient: Address,
 ) -> Block {
     let coinbase = Transaction::coinbase(0, initial_reward, recipient);
-    let merkle_root = Block::compute_merkle_root(&[coinbase.clone()]);
+    let merkle_root = Block::compute_merkle_root(std::slice::from_ref(&coinbase));
 
     let header = BlockHeader {
         version: BlockHeader::CURRENT_VERSION,

@@ -225,7 +225,7 @@ fn test_block_serialization() {
     let (pk, _) = test_keypair();
     let address = Address::from_public_key(&pk);
     let tx = Transaction::coinbase(0, 50_000_000, address);
-    let merkle_root = Block::compute_merkle_root(&[tx.clone()]);
+    let merkle_root = Block::compute_merkle_root(std::slice::from_ref(&tx));
 
     let header = BlockHeader {
         version: 1,
@@ -253,7 +253,7 @@ fn test_merkle_root_single_tx() {
     let (pk, _) = test_keypair();
     let tx = Transaction::coinbase(0, 50_000_000, Address::from_public_key(&pk));
 
-    let merkle_root = Block::compute_merkle_root(&[tx.clone()]);
+    let merkle_root = Block::compute_merkle_root(std::slice::from_ref(&tx));
     assert_eq!(merkle_root, tx.txid());
 }
 
@@ -510,7 +510,7 @@ fn test_blockchain() -> (Blockchain, PublicKey, SecretKey, Address) {
         let reward = chain.block_reward(height);
 
         let coinbase = Transaction::coinbase(height, reward, address);
-        let merkle_root = Block::compute_merkle_root(&[coinbase.clone()]);
+        let merkle_root = Block::compute_merkle_root(std::slice::from_ref(&coinbase));
 
         let header = BlockHeader {
             version: BlockHeader::CURRENT_VERSION,
@@ -691,7 +691,7 @@ fn test_insufficient_multisig_signatures_rejected() {
             condition: multisig_condition,
         }],
     };
-    let merkle_root = Block::compute_merkle_root(&[coinbase.clone()]);
+    let merkle_root = Block::compute_merkle_root(std::slice::from_ref(&coinbase));
     let mut timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -718,7 +718,7 @@ fn test_insufficient_multisig_signatures_rejected() {
         let reward = chain.block_reward(height);
 
         let miner_coinbase = Transaction::coinbase(height, reward, miner_address);
-        let block_merkle_root = Block::compute_merkle_root(&[miner_coinbase.clone()]);
+        let block_merkle_root = Block::compute_merkle_root(std::slice::from_ref(&miner_coinbase));
 
         let header = BlockHeader {
             version: BlockHeader::CURRENT_VERSION,

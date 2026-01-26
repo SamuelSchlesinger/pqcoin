@@ -10,21 +10,16 @@ use crate::crypto::PublicKey;
 pub const WALLET_VERSION: u32 = 2;
 
 /// Wallet type enumeration.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum WalletType {
     /// Standard wallet with single keypair.
+    #[default]
     Standard,
     /// HD (Hierarchical Deterministic) wallet derived from mnemonic.
     Hd,
     /// Watch-only wallet (no secret key).
     WatchOnly,
-}
-
-impl Default for WalletType {
-    fn default() -> Self {
-        Self::Standard
-    }
 }
 
 /// HD wallet metadata.
