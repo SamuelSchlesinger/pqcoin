@@ -41,8 +41,8 @@ impl Mempool {
             .collect();
 
         // Sort by fee rate descending (highest fee rate first)
-        txs_with_fee_rate
-            .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        // Use total_cmp for deterministic NaN handling (NaN sorts as greater than all values)
+        txs_with_fee_rate.sort_by(|a, b| b.1.total_cmp(&a.1));
 
         txs_with_fee_rate
             .into_iter()
@@ -62,7 +62,10 @@ impl Mempool {
             input_sum = input_sum.checked_add(utxo.output.amount)?;
         }
 
-        let output_sum: u64 = tx.outputs.iter().map(|o| o.amount).sum();
+        let output_sum: u64 = tx
+            .outputs
+            .iter()
+            .try_fold(0u64, |acc, o| acc.checked_add(o.amount))?;
 
         input_sum.checked_sub(output_sum)
     }

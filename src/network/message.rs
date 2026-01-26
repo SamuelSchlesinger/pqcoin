@@ -570,11 +570,17 @@ impl Message {
                         DeserializeError::LengthOverflow,
                     ));
                 }
+                // Use HashSet to deduplicate items and prevent memory exhaustion
+                // from receiving many identical hashes
+                let mut seen = std::collections::HashSet::with_capacity(count as usize);
                 let mut items = Vec::with_capacity(count as usize);
                 let mut data = rest;
                 for _ in 0..count {
                     let (item, rest) = InvItem::deserialize(data)?;
-                    items.push(item);
+                    // Only add if not already seen (dedup by hash and type)
+                    if seen.insert((item.inv_type as u8, item.hash)) {
+                        items.push(item);
+                    }
                     data = rest;
                 }
                 Ok(Message::Inv { items })
@@ -586,11 +592,16 @@ impl Message {
                         DeserializeError::LengthOverflow,
                     ));
                 }
+                // Use HashSet to deduplicate items
+                let mut seen = std::collections::HashSet::with_capacity(count as usize);
                 let mut items = Vec::with_capacity(count as usize);
                 let mut data = rest;
                 for _ in 0..count {
                     let (item, rest) = InvItem::deserialize(data)?;
-                    items.push(item);
+                    // Only add if not already seen (dedup by hash and type)
+                    if seen.insert((item.inv_type as u8, item.hash)) {
+                        items.push(item);
+                    }
                     data = rest;
                 }
                 Ok(Message::GetData { items })

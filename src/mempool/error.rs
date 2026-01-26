@@ -23,6 +23,15 @@ pub enum MempoolError {
         /// The minimum required fee rate.
         min: u64,
     },
+    /// Transaction output is below the dust limit.
+    DustOutput {
+        /// Output index.
+        index: usize,
+        /// Amount in the output.
+        amount: u64,
+        /// Minimum dust limit.
+        limit: u64,
+    },
 }
 
 impl std::fmt::Display for MempoolError {
@@ -38,6 +47,16 @@ impl std::fmt::Display for MempoolError {
             MempoolError::InvalidWitness => write!(f, "invalid witness type"),
             MempoolError::FeeTooLow { got, min } => {
                 write!(f, "fee rate {got} is below minimum {min}")
+            }
+            MempoolError::DustOutput {
+                index,
+                amount,
+                limit,
+            } => {
+                write!(
+                    f,
+                    "output {index} amount {amount} is below dust limit {limit}"
+                )
             }
         }
     }

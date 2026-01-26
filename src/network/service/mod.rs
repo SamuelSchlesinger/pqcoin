@@ -6,6 +6,7 @@
 //! - Message routing between peers and local handlers
 //! - Block and transaction relay
 
+mod addrman;
 mod defense;
 mod events;
 mod handlers;
@@ -13,16 +14,20 @@ mod state;
 
 // Re-export public types
 pub use events::{NetworkError, NetworkEvent};
+pub use state::{NetworkState, PeerCommand};
 
 use crate::blockchain::{Block, Blockchain, Transaction};
-use crate::constants::{DEFAULT_PORT, MAX_OUTBOUND, MAX_PEERS, PING_INTERVAL_SECS};
+use crate::constants::{
+    ADDR_FETCH_INTERVAL_SECS, CONNECTION_RETRY_INTERVAL_SECS, DEFAULT_PORT, GETADDR_DELAY_SECS,
+    MAX_OUTBOUND, MAX_PEERS, PEER_ROTATION_INTERVAL_SECS, PING_INTERVAL_SECS,
+};
 use crate::mempool::Mempool;
-use crate::network::message::{InvItem, Message};
+use crate::network::message::{InvItem, Message, Services};
 use crate::network::peer::Peer;
 use crate::network::sync::{SyncManager, SyncState};
 
 use handlers::{broadcast, handle_peer_message, send_to_peer};
-use state::{NetworkState, PeerCommand, PeerInfo, PeerMessage};
+use state::{PeerInfo, PeerMessage};
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -82,6 +87,8 @@ pub struct NetworkService {
     block_submit_rx: Option<mpsc::Receiver<Block>>,
     /// Next peer ID.
     next_peer_id: Arc<AtomicU64>,
+    /// Actual bound address (set after binding to a port).
+    local_addr: Option<SocketAddr>,
 }
 
 impl NetworkService {
@@ -107,6 +114,7 @@ impl NetworkService {
             block_submit_tx,
             block_submit_rx: Some(block_submit_rx),
             next_peer_id: Arc::new(AtomicU64::new(1)),
+            local_addr: None,
         }
     }
 
@@ -125,6 +133,14 @@ impl NetworkService {
         self.blockchain.clone()
     }
 
+    /// Get a reference to the network state for peer count queries.
+    ///
+    /// This allows external code to query the peer count even after the service
+    /// is moved into a spawned task.
+    pub fn state(&self) -> Arc<RwLock<NetworkState>> {
+        self.state.clone()
+    }
+
     /// Take the event receiver (can only be called once).
     pub fn take_event_receiver(&mut self) -> Option<mpsc::Receiver<NetworkEvent>> {
         self.event_rx.take()
@@ -140,11 +156,20 @@ impl NetworkService {
         self.sync.read().await.state()
     }
 
+    /// Get the actual bound local address.
+    ///
+    /// This is useful when binding to port 0 to get an ephemeral port.
+    /// Returns `None` if the service hasn't started running yet.
+    pub fn local_addr(&self) -> Option<SocketAddr> {
+        self.local_addr
+    }
+
     /// Run the network service.
     pub async fn run(&mut self) -> Result<(), NetworkError> {
         // Start listening
         let listener = TcpListener::bind(self.config.listen_addr).await?;
-        tracing::info!(addr = %self.config.listen_addr, "listening for connections");
+        self.local_addr = Some(listener.local_addr()?);
+        tracing::info!(addr = %self.local_addr.unwrap(), "listening for connections");
 
         // Take the peer message receiver
         let mut peer_msg_rx = self.peer_msg_rx.take().expect("run called twice");
@@ -152,14 +177,38 @@ impl NetworkService {
         // Take the block submit receiver
         let mut block_submit_rx = self.block_submit_rx.take().expect("run called twice");
 
-        // Connect to seed peers
+        // Connect to seed peers and add them to addr_manager
         for addr in self.config.seed_peers.clone() {
+            // Add seed peers to address manager
+            {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                let mut state = self.state.write().await;
+                state
+                    .addr_manager
+                    .add_addr(addr, Services::NODE_NETWORK, now, None);
+            }
             let _ = self.connect(addr).await;
+        }
+
+        // Register our local address
+        {
+            let mut state = self.state.write().await;
+            if let Some(local) = self.local_addr {
+                state.addr_manager.add_local_addr(local);
+            }
         }
 
         // Periodic tasks
         let mut ping_interval = interval(Duration::from_secs(PING_INTERVAL_SECS));
         let mut sync_interval = interval(Duration::from_secs(1));
+        let mut peer_rotation_interval = interval(Duration::from_secs(PEER_ROTATION_INTERVAL_SECS));
+        let mut addr_fetch_interval = interval(Duration::from_secs(ADDR_FETCH_INTERVAL_SECS));
+        let mut connection_retry_interval =
+            interval(Duration::from_secs(CONNECTION_RETRY_INTERVAL_SECS));
+        let mut getaddr_check_interval = interval(Duration::from_secs(1));
 
         loop {
             tokio::select! {
@@ -203,6 +252,150 @@ impl NetworkService {
                 _ = sync_interval.tick() => {
                     self.check_sync().await;
                 }
+
+                // Periodic peer rotation
+                _ = peer_rotation_interval.tick() => {
+                    self.rotate_random_peer().await;
+                }
+
+                // Periodic address fetch
+                _ = addr_fetch_interval.tick() => {
+                    self.fetch_addrs_from_random_peer().await;
+                }
+
+                // Periodic connection retry
+                _ = connection_retry_interval.tick() => {
+                    self.try_fill_outbound_slots().await;
+                }
+
+                // Check for pending GetAddr messages
+                _ = getaddr_check_interval.tick() => {
+                    self.send_pending_getaddr().await;
+                }
+            }
+        }
+    }
+
+    /// Run the network service with a shutdown signal.
+    ///
+    /// This is the same as `run()` but accepts a shutdown signal that can be used
+    /// to gracefully stop the service. Useful for testing.
+    pub async fn run_with_shutdown(
+        &mut self,
+        mut shutdown: tokio::sync::oneshot::Receiver<()>,
+    ) -> Result<(), NetworkError> {
+        // Start listening
+        let listener = TcpListener::bind(self.config.listen_addr).await?;
+        self.local_addr = Some(listener.local_addr()?);
+        tracing::info!(addr = %self.local_addr.unwrap(), "listening for connections");
+
+        // Take the peer message receiver
+        let mut peer_msg_rx = self.peer_msg_rx.take().expect("run called twice");
+
+        // Take the block submit receiver
+        let mut block_submit_rx = self.block_submit_rx.take().expect("run called twice");
+
+        // Connect to seed peers and add them to addr_manager
+        for addr in self.config.seed_peers.clone() {
+            // Add seed peers to address manager
+            {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                let mut state = self.state.write().await;
+                state
+                    .addr_manager
+                    .add_addr(addr, Services::NODE_NETWORK, now, None);
+            }
+            let _ = self.connect(addr).await;
+        }
+
+        // Register our local address
+        {
+            let mut state = self.state.write().await;
+            if let Some(local) = self.local_addr {
+                state.addr_manager.add_local_addr(local);
+            }
+        }
+
+        // Periodic tasks
+        let mut ping_interval = interval(Duration::from_secs(PING_INTERVAL_SECS));
+        let mut sync_interval = interval(Duration::from_secs(1));
+        let mut peer_rotation_interval = interval(Duration::from_secs(PEER_ROTATION_INTERVAL_SECS));
+        let mut addr_fetch_interval = interval(Duration::from_secs(ADDR_FETCH_INTERVAL_SECS));
+        let mut connection_retry_interval =
+            interval(Duration::from_secs(CONNECTION_RETRY_INTERVAL_SECS));
+        let mut getaddr_check_interval = interval(Duration::from_secs(1));
+
+        loop {
+            tokio::select! {
+                // Shutdown signal
+                _ = &mut shutdown => {
+                    tracing::info!("shutdown signal received");
+                    return Ok(());
+                }
+
+                // Accept incoming connections
+                result = listener.accept() => {
+                    match result {
+                        Ok((stream, addr)) => {
+                            if let Err(e) = self.handle_incoming(stream, addr).await {
+                                tracing::debug!(addr = %addr, error = %e, "failed to accept connection");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!(error = %e, "accept error");
+                        }
+                    }
+                }
+
+                // Handle messages from peer tasks
+                Some(msg) = peer_msg_rx.recv() => {
+                    handle_peer_message(
+                        msg,
+                        &self.state,
+                        &self.blockchain,
+                        &self.mempool,
+                        &self.sync,
+                        &self.event_tx,
+                    ).await;
+                }
+
+                // Handle locally mined blocks
+                Some(block) = block_submit_rx.recv() => {
+                    self.handle_mined_block(block).await;
+                }
+
+                // Periodic ping
+                _ = ping_interval.tick() => {
+                    self.send_pings().await;
+                }
+
+                // Periodic sync check
+                _ = sync_interval.tick() => {
+                    self.check_sync().await;
+                }
+
+                // Periodic peer rotation
+                _ = peer_rotation_interval.tick() => {
+                    self.rotate_random_peer().await;
+                }
+
+                // Periodic address fetch
+                _ = addr_fetch_interval.tick() => {
+                    self.fetch_addrs_from_random_peer().await;
+                }
+
+                // Periodic connection retry
+                _ = connection_retry_interval.tick() => {
+                    self.try_fill_outbound_slots().await;
+                }
+
+                // Check for pending GetAddr messages
+                _ = getaddr_check_interval.tick() => {
+                    self.send_pending_getaddr().await;
+                }
             }
         }
     }
@@ -212,6 +405,13 @@ impl NetworkService {
         // Check if already connected
         {
             let state = self.state.read().await;
+
+            // Check partition blocklist
+            if state.partition_blocklist.is_blocked(&addr) {
+                tracing::debug!(addr = %addr, "outbound connection blocked by partition blocklist");
+                return Err(NetworkError::MaxPeersReached);
+            }
+
             if state.connected_addrs.contains_key(&addr) {
                 return Err(NetworkError::AlreadyConnected);
             }
@@ -243,6 +443,12 @@ impl NetworkService {
 
         {
             let mut state = self.state.write().await;
+
+            // Check partition blocklist
+            if state.partition_blocklist.is_blocked(&addr) {
+                tracing::debug!(addr = %addr, "incoming connection blocked by partition blocklist");
+                return Err(NetworkError::MaxPeersReached);
+            }
 
             // Check if IP is banned
             if state.ban_list.is_banned(&ip) {
@@ -602,8 +808,16 @@ impl NetworkService {
                 }
 
                 // Start header download from best peer
-                if let Some((peer_id, _)) = best_peer {
+                if let Some((peer_id, peer_height)) = best_peer {
                     drop(state);
+                    tracing::info!(
+                        peer_id = peer_id,
+                        peer_height = peer_height,
+                        our_height = our_height,
+                        "initiating sync with peer"
+                    );
+                    // Transition to DownloadingHeaders to prevent duplicate requests
+                    sync.set_state(SyncState::DownloadingHeaders);
                     let request = sync.create_get_headers_message().await;
                     drop(sync);
                     self.send_to_peer(peer_id, request).await;
@@ -629,6 +843,170 @@ impl NetworkService {
         }
     }
 
+    /// Rotate one random outbound peer (disconnect + try new).
+    ///
+    /// This prevents eclipse attacks by ensuring peer diversity over time.
+    /// Uses random selection rather than performance-based to avoid fingerprinting.
+    async fn rotate_random_peer(&self) {
+        // Collect info and pick random peer while holding lock briefly
+        let peer_to_disconnect = {
+            let state = self.state.read().await;
+
+            // Only rotate if we have some outbound connections
+            if state.outbound_count == 0 {
+                return;
+            }
+
+            // Collect outbound peers
+            let outbound_peers: Vec<(u64, std::net::SocketAddr)> = state
+                .peers
+                .iter()
+                .filter(|(_, info)| info.outbound)
+                .map(|(&id, info)| (id, info.addr))
+                .collect();
+
+            if outbound_peers.is_empty() {
+                return;
+            }
+
+            // Check if we have any addresses to connect to
+            let addr_count = state.addr_manager.addr_count();
+            if addr_count <= 1 {
+                // Not enough known addresses to rotate
+                return;
+            }
+
+            // Pick a random outbound peer to disconnect
+            let idx = rand::random::<usize>() % outbound_peers.len();
+            outbound_peers[idx]
+        };
+
+        let (peer_id, addr) = peer_to_disconnect;
+
+        tracing::debug!(
+            peer_id = peer_id,
+            addr = %addr,
+            "rotating outbound peer"
+        );
+
+        // Disconnect the peer
+        self.disconnect_peer(peer_id).await;
+
+        // Try to connect to a new peer
+        // The try_fill_outbound_slots will handle this on next tick
+    }
+
+    /// Request addresses from a random connected peer.
+    async fn fetch_addrs_from_random_peer(&self) {
+        let peer_id = {
+            let state = self.state.read().await;
+
+            if state.peers.is_empty() {
+                return;
+            }
+
+            // Pick a random peer
+            let peer_ids: Vec<u64> = state.peers.keys().cloned().collect();
+            let idx = rand::random::<usize>() % peer_ids.len();
+            peer_ids[idx]
+        };
+
+        tracing::debug!(peer_id = peer_id, "requesting addresses from peer");
+        self.send_to_peer(peer_id, Message::GetAddr).await;
+    }
+
+    /// Fill empty outbound slots with new connections.
+    async fn try_fill_outbound_slots(&self) {
+        let (available_slots, connected_addrs) = {
+            let state = self.state.read().await;
+            let available = self
+                .config
+                .max_outbound
+                .saturating_sub(state.outbound_count);
+            let connected: std::collections::HashSet<std::net::SocketAddr> =
+                state.connected_addrs.keys().cloned().collect();
+            (available, connected)
+        };
+
+        if available_slots == 0 {
+            return;
+        }
+
+        // Try to fill available slots
+        for _ in 0..available_slots {
+            let addr = {
+                let mut state = self.state.write().await;
+                state.addr_manager.get_random_addr(&connected_addrs)
+            };
+
+            if let Some(addr) = addr {
+                // Mark as in progress
+                {
+                    let mut state = self.state.write().await;
+                    state.addr_manager.mark_in_progress(&addr);
+                }
+
+                tracing::debug!(addr = %addr, "attempting new outbound connection");
+
+                match self.connect(addr).await {
+                    Ok(peer_id) => {
+                        tracing::debug!(
+                            peer_id = peer_id,
+                            addr = %addr,
+                            "new outbound connection established"
+                        );
+                        // mark_good will be called when handshake completes
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            addr = %addr,
+                            error = %e,
+                            "failed to connect to address"
+                        );
+                        let mut state = self.state.write().await;
+                        state.addr_manager.mark_attempt_failed(&addr);
+                    }
+                }
+            } else {
+                // No more addresses available
+                break;
+            }
+        }
+    }
+
+    /// Send GetAddr to peers that completed handshake after the delay.
+    async fn send_pending_getaddr(&self) {
+        let now = std::time::Instant::now();
+        let delay = Duration::from_secs(GETADDR_DELAY_SECS);
+
+        let peers_to_send: Vec<u64> = {
+            let state = self.state.read().await;
+            state
+                .pending_getaddr
+                .iter()
+                .filter(|(_, time)| now.duration_since(**time) >= delay)
+                .map(|(peer_id, _)| *peer_id)
+                .collect()
+        };
+
+        if peers_to_send.is_empty() {
+            return;
+        }
+
+        // Remove from pending and send GetAddr
+        {
+            let mut state = self.state.write().await;
+            for peer_id in &peers_to_send {
+                state.pending_getaddr.remove(peer_id);
+            }
+        }
+
+        for peer_id in peers_to_send {
+            tracing::debug!(peer_id = peer_id, "sending GetAddr after handshake");
+            self.send_to_peer(peer_id, Message::GetAddr).await;
+        }
+    }
+
     /// Disconnect a peer.
     pub async fn disconnect_peer(&self, peer_id: u64) {
         let state = self.state.read().await;
@@ -645,6 +1023,54 @@ impl NetworkService {
             .iter()
             .map(|(&id, info)| (id, info.addr))
             .collect()
+    }
+
+    /// Block a socket address from connecting (for partition testing).
+    pub async fn block_addr(&self, addr: SocketAddr) {
+        let mut state = self.state.write().await;
+        state.partition_blocklist.block(addr);
+        tracing::debug!(addr = %addr, "added to partition blocklist");
+    }
+
+    /// Unblock a socket address (for partition testing).
+    pub async fn unblock_addr(&self, addr: &SocketAddr) {
+        let mut state = self.state.write().await;
+        state.partition_blocklist.unblock(addr);
+        tracing::debug!(addr = %addr, "removed from partition blocklist");
+    }
+
+    /// Clear all blocked addresses (for partition testing).
+    pub async fn clear_blocklist(&self) {
+        let mut state = self.state.write().await;
+        state.partition_blocklist.clear();
+        tracing::debug!("partition blocklist cleared");
+    }
+
+    /// Disconnect a peer by their socket address.
+    ///
+    /// Returns true if a peer was found and disconnected, false otherwise.
+    pub async fn disconnect_addr(&self, addr: &SocketAddr) -> bool {
+        let sender = {
+            let state = self.state.read().await;
+            if let Some(&peer_id) = state.connected_addrs.get(addr) {
+                state.peer_senders.get(&peer_id).cloned()
+            } else {
+                None
+            }
+        };
+
+        if let Some(sender) = sender {
+            let _ = sender.send(PeerCommand::Disconnect).await;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get list of connected socket addresses.
+    pub async fn connected_addrs(&self) -> Vec<SocketAddr> {
+        let state = self.state.read().await;
+        state.connected_addrs.keys().cloned().collect()
     }
 }
 

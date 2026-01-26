@@ -149,6 +149,14 @@ impl SyncManager {
         self.state
     }
 
+    /// Set the sync state.
+    pub fn set_state(&mut self, state: SyncState) {
+        if self.state != state {
+            tracing::debug!(old = ?self.state, new = ?state, "sync state transition");
+            self.state = state;
+        }
+    }
+
     /// Get the number of blocks in flight.
     pub fn blocks_in_flight(&self) -> usize {
         self.blocks_in_flight.len()
@@ -168,6 +176,37 @@ impl SyncManager {
             self.best_known_height = height;
             self.best_peer = Some(peer_id);
         }
+    }
+
+    /// Trigger immediate sync if we're idle and a peer has a higher chain.
+    /// Returns a GetHeaders message if sync was started, None otherwise.
+    pub async fn maybe_start_sync(&mut self, peer_id: u64, peer_height: u64) -> Option<Message> {
+        // Update best known height
+        self.update_peer_height(peer_id, peer_height);
+
+        // Only start sync if we're idle
+        if !matches!(self.state, SyncState::Idle) {
+            return None;
+        }
+
+        // Check if peer is ahead of us
+        let our_height = self.blockchain.read().await.height();
+        if peer_height <= our_height {
+            return None;
+        }
+
+        // Start sync immediately
+        tracing::info!(
+            peer_id = peer_id,
+            our_height = our_height,
+            peer_height = peer_height,
+            "starting immediate sync on peer connect"
+        );
+
+        self.state = SyncState::DownloadingHeaders;
+        self.active_sync_peer = Some(peer_id);
+
+        Some(self.create_get_headers_message().await)
     }
 
     /// Build a block locator for requesting headers.
@@ -297,6 +336,8 @@ impl SyncManager {
         drop(blockchain);
 
         // Add valid headers to pending queue and track them
+        let headers_len = headers.len();
+        let mut accepted_count = 0;
         for header in headers {
             if self.pending_headers.len() >= MAX_PENDING_HEADERS {
                 break;
@@ -304,10 +345,13 @@ impl SyncManager {
             let header_hash = header.hash();
             self.downloaded_headers.insert(header_hash, header);
             self.pending_headers.push_back(header);
+            accepted_count += 1;
         }
 
-        // If we got a full batch, request more
-        if self.pending_headers.len() < MAX_PENDING_HEADERS {
+        // If we got a full batch (2000 headers) AND accepted all of them, request more
+        // Otherwise, we've received all headers and should download blocks
+        // Using accepted_count prevents infinite loop when pending_headers is near capacity
+        if headers_len >= MAX_HEADERS_COUNT && accepted_count == headers_len {
             self.state = SyncState::DownloadingHeaders;
             responses.push(self.create_get_headers_message().await);
         } else {
@@ -359,6 +403,28 @@ impl SyncManager {
 
     /// Process a received block.
     pub async fn process_block(&mut self, peer_id: u64, block: Block) -> Result<bool, SyncError> {
+        let result = self.process_block_internal(peer_id, block).await;
+
+        // If block was added successfully, try to process orphans
+        if let Ok((true, hash)) = &result {
+            self.process_orphans(*hash).await;
+        }
+
+        // Check if we're done syncing
+        if self.pending_headers.is_empty() && self.blocks_in_flight.is_empty() {
+            self.state = SyncState::Synced;
+        }
+
+        result.map(|(added, _)| added)
+    }
+
+    /// Internal block processing without triggering orphan handling.
+    /// Returns (was_added, block_hash) on success.
+    async fn process_block_internal(
+        &mut self,
+        peer_id: u64,
+        block: Block,
+    ) -> Result<(bool, Hash), SyncError> {
         let hash = block.hash();
 
         // Remove from in-flight
@@ -367,7 +433,7 @@ impl SyncManager {
         // Also remove from downloaded_headers now that we have the full block
         self.downloaded_headers.remove(&hash);
 
-        // Try to add to blockchain - scope the lock to release it before orphan handling
+        // Try to add to blockchain
         let result = {
             let mut blockchain = self.blockchain.write().await;
             match blockchain.add_block(block.clone()) {
@@ -381,25 +447,15 @@ impl SyncManager {
                 }
                 Err(e) => Err(e),
             }
-        }; // blockchain lock is dropped here
+        };
 
         match result {
-            Ok(true) => {
-                // Try to process any orphans that depend on this block
-                self.process_orphans(hash).await;
-
-                // Check if we're done syncing
-                if self.pending_headers.is_empty() && self.blocks_in_flight.is_empty() {
-                    self.state = SyncState::Synced;
-                }
-
-                Ok(true)
-            }
+            Ok(true) => Ok((true, hash)),
             Err(BlockchainError::UnknownPreviousBlock) => {
                 // Store as orphan with LRU eviction, tracking the originating peer
                 tracing::debug!(hash = %hash, peer_id = peer_id, "storing orphan block");
                 self.add_orphan(hash, block, peer_id);
-                Ok(false)
+                Ok((false, hash))
             }
             Err(e) => {
                 tracing::warn!(
@@ -410,28 +466,50 @@ impl SyncManager {
                 );
                 Err(SyncError::BlockValidationFailed(e))
             }
-            Ok(false) => Ok(false), // Should not happen, but handle gracefully
+            Ok(false) => Ok((false, hash)),
         }
     }
 
-    /// Try to process orphan blocks that may now be valid.
-    async fn process_orphans(&mut self, new_hash: Hash) {
-        // Find orphans that have this block as their parent
-        let orphan_data: Vec<(Hash, u64)> = self
-            .orphan_blocks
-            .iter()
-            .filter(|(_, (block, _))| block.header.prev_hash == new_hash)
-            .map(|(hash, (_, peer_id))| (*hash, *peer_id))
-            .collect();
+    /// Maximum depth for orphan chain processing to prevent stack overflow.
+    const MAX_ORPHAN_CHAIN_DEPTH: usize = 100;
 
-        for (hash, peer_id) in orphan_data {
-            if let Some((block, _)) = self.remove_orphan(&hash) {
-                // Recursively try to add this orphan with its original peer_id
-                if let Ok(true) = Box::pin(self.process_block(peer_id, block)).await {
-                    // Successfully added, process its orphans too
-                    Box::pin(self.process_orphans(hash)).await;
+    /// Try to process orphan blocks that may now be valid.
+    /// Uses an iterative approach with depth limit to prevent stack overflow.
+    async fn process_orphans(&mut self, new_hash: Hash) {
+        let mut pending_hashes = vec![new_hash];
+        let mut depth = 0;
+
+        while !pending_hashes.is_empty() && depth < Self::MAX_ORPHAN_CHAIN_DEPTH {
+            let current_hashes = std::mem::take(&mut pending_hashes);
+
+            for parent_hash in current_hashes {
+                // Find orphans that have this block as their parent
+                let orphan_data: Vec<(Hash, u64)> = self
+                    .orphan_blocks
+                    .iter()
+                    .filter(|(_, (block, _))| block.header.prev_hash == parent_hash)
+                    .map(|(hash, (_, peer_id))| (*hash, *peer_id))
+                    .collect();
+
+                for (hash, peer_id) in orphan_data {
+                    if let Some((block, _)) = self.remove_orphan(&hash) {
+                        // Try to add this orphan with its original peer_id
+                        // Use internal version to avoid recursive orphan processing
+                        if let Ok((true, added_hash)) =
+                            self.process_block_internal(peer_id, block).await
+                        {
+                            // Successfully added, queue its hash for next iteration
+                            pending_hashes.push(added_hash);
+                        }
+                    }
                 }
             }
+
+            depth += 1;
+        }
+
+        if depth >= Self::MAX_ORPHAN_CHAIN_DEPTH {
+            tracing::warn!("orphan chain depth limit reached, stopping processing");
         }
     }
 

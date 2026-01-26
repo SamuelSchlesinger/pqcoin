@@ -8,8 +8,8 @@
 use crate::constants::{
     BAN_DURATION_SECS, CONNECTION_RATE_LIMIT_SECS, MAX_CONNECTIONS_PER_IP, MAX_PER_SUBNET,
 };
-use std::collections::HashMap;
-use std::net::IpAddr;
+use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
 /// Ban list for misbehaving peers.
@@ -116,13 +116,23 @@ impl RateLimiter {
     }
 }
 
+/// Subnet prefix type that handles different prefix lengths for IPv4 and IPv6.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum SubnetPrefix {
+    /// IPv4 /16 prefix (2 bytes)
+    V4([u8; 2]),
+    /// IPv6 /48 prefix (6 bytes) - typical ISP allocation size
+    V6([u8; 6]),
+}
+
 /// Subnet limiter for eclipse attack protection.
 ///
-/// Limits the number of connections from any single /16 subnet to prevent
+/// Limits the number of connections from any single subnet to prevent
 /// an attacker from monopolizing connections with IPs from the same subnet.
+/// Uses /16 for IPv4 and /48 for IPv6 (typical ISP allocation size).
 pub(crate) struct SubnetLimiter {
-    /// Connection count per /16 subnet prefix.
-    subnet_counts: HashMap<[u8; 2], usize>,
+    /// Connection count per subnet prefix.
+    subnet_counts: HashMap<SubnetPrefix, usize>,
 }
 
 impl SubnetLimiter {
@@ -132,19 +142,21 @@ impl SubnetLimiter {
         }
     }
 
-    /// Extract /16 prefix from IP address.
+    /// Extract subnet prefix from IP address.
     ///
-    /// For IPv4: returns first 2 bytes directly.
-    /// For IPv6: returns first 2 bytes of the address (covers /16 equivalent).
-    fn get_subnet_prefix(ip: &IpAddr) -> [u8; 2] {
+    /// For IPv4: returns /16 prefix (first 2 bytes).
+    /// For IPv6: returns /48 prefix (first 6 bytes) - typical ISP allocation.
+    fn get_subnet_prefix(ip: &IpAddr) -> SubnetPrefix {
         match ip {
             IpAddr::V4(ipv4) => {
                 let octets = ipv4.octets();
-                [octets[0], octets[1]]
+                SubnetPrefix::V4([octets[0], octets[1]])
             }
             IpAddr::V6(ipv6) => {
                 let octets = ipv6.octets();
-                [octets[0], octets[1]]
+                SubnetPrefix::V6([
+                    octets[0], octets[1], octets[2], octets[3], octets[4], octets[5],
+                ])
             }
         }
     }
@@ -171,5 +183,50 @@ impl SubnetLimiter {
                 self.subnet_counts.remove(&prefix);
             }
         }
+    }
+}
+
+/// Partition blocklist for testing network partitions.
+///
+/// Unlike BanList, entries have no expiry time. Uses SocketAddr
+/// (not IpAddr) because tests run multiple nodes on localhost with
+/// different ports.
+pub struct PartitionBlocklist {
+    /// Blocked socket addresses.
+    blocked_addrs: HashSet<SocketAddr>,
+}
+
+impl PartitionBlocklist {
+    /// Create a new empty partition blocklist.
+    pub fn new() -> Self {
+        Self {
+            blocked_addrs: HashSet::new(),
+        }
+    }
+
+    /// Check if a socket address is blocked.
+    pub fn is_blocked(&self, addr: &SocketAddr) -> bool {
+        self.blocked_addrs.contains(addr)
+    }
+
+    /// Block a socket address.
+    pub fn block(&mut self, addr: SocketAddr) {
+        self.blocked_addrs.insert(addr);
+    }
+
+    /// Unblock a socket address.
+    pub fn unblock(&mut self, addr: &SocketAddr) {
+        self.blocked_addrs.remove(addr);
+    }
+
+    /// Clear all blocked addresses.
+    pub fn clear(&mut self) {
+        self.blocked_addrs.clear();
+    }
+}
+
+impl Default for PartitionBlocklist {
+    fn default() -> Self {
+        Self::new()
     }
 }

@@ -246,26 +246,33 @@ async fn cmd_send(cli: &Cli, to: &str, amount: u64, fee: u64) -> Result<(), Wall
     let info: BlockchainInfoResponse =
         rpc_call(&cli.rpc, "getblockchaininfo", serde_json::json!([])).await?;
 
-    // Convert UTXOs
-    let utxo_inputs: Vec<UtxoInput> = utxos
-        .into_iter()
-        .map(|u| {
-            let txid_bytes = hex::decode(&u.txid).unwrap_or_default();
-            let mut txid_arr = [0u8; 64];
-            if txid_bytes.len() == 64 {
-                txid_arr.copy_from_slice(&txid_bytes);
-            }
-            UtxoInput {
-                outpoint: pqcoin::blockchain::OutPoint::new(
-                    pqcoin::crypto::Hash::from_bytes(txid_arr),
-                    u.vout,
-                ),
-                amount: u.amount,
-                height: u.height,
-                is_coinbase: u.is_coinbase,
-            }
-        })
-        .collect();
+    // Convert UTXOs with proper error handling
+    let mut utxo_inputs: Vec<UtxoInput> = Vec::with_capacity(utxos.len());
+    for u in utxos {
+        let txid_bytes = hex::decode(&u.txid).map_err(|e| {
+            WalletError::InvalidFormat(format!("invalid txid hex '{}': {}", u.txid, e))
+        })?;
+
+        if txid_bytes.len() != 64 {
+            return Err(WalletError::InvalidFormat(format!(
+                "txid must be 64 bytes, got {}",
+                txid_bytes.len()
+            )));
+        }
+
+        let mut txid_arr = [0u8; 64];
+        txid_arr.copy_from_slice(&txid_bytes);
+
+        utxo_inputs.push(UtxoInput {
+            outpoint: pqcoin::blockchain::OutPoint::new(
+                pqcoin::crypto::Hash::from_bytes(txid_arr),
+                u.vout,
+            ),
+            amount: u.amount,
+            height: u.height,
+            is_coinbase: u.is_coinbase,
+        });
+    }
 
     // Build transaction
     let tx = TransactionBuilder::new()

@@ -8,7 +8,8 @@
 // ============================================================================
 
 /// Maximum number of transactions allowed in a single block (excluding coinbase).
-pub const MAX_BLOCK_TXS: usize = 1000;
+/// Set to 4200 to match Bitcoin's ~7 TPS throughput (4200 txs / 600 sec = 7 TPS).
+pub const MAX_BLOCK_TXS: usize = 4200;
 
 /// Maximum number of inputs allowed in a single transaction.
 pub const MAX_TX_INPUTS: usize = 10_000;
@@ -24,9 +25,9 @@ pub const MAX_MULTISIG_KEYS: usize = 15;
 /// Maximum size in bytes for variable-length serialized data.
 pub const MAX_SERIALIZE_BYTES: usize = 1_000_000;
 
-/// Maximum serialized block size in bytes (16 MB).
-/// Increased from 8 MB to accommodate larger post-quantum signatures.
-pub const MAX_BLOCK_SIZE: usize = 16 * 1024 * 1024;
+/// Maximum serialized block size in bytes (32 MB).
+/// Sized to accommodate ~4200 transactions at ~7.5 KB each, matching Bitcoin's ~7 TPS.
+pub const MAX_BLOCK_SIZE: usize = 32 * 1024 * 1024;
 
 /// Number of blocks before coinbase outputs can be spent.
 pub const COINBASE_MATURITY: u64 = 100;
@@ -95,6 +96,31 @@ pub const ADDR_RELAY_RATE: f64 = 0.1;
 /// Maximum burst size for address relay.
 /// Allows initial burst of address messages while maintaining long-term rate limit.
 pub const ADDR_RELAY_BURST: usize = 1000;
+
+// ============================================================================
+// Peer Discovery Constants
+// ============================================================================
+
+/// Interval for peer rotation - disconnect random peer and try new one (5 minutes).
+pub const PEER_ROTATION_INTERVAL_SECS: u64 = 5 * 60;
+
+/// Interval for requesting addresses from a random peer (10 minutes).
+pub const ADDR_FETCH_INTERVAL_SECS: u64 = 10 * 60;
+
+/// Interval for attempting new outbound connections when below target (30 seconds).
+pub const CONNECTION_RETRY_INTERVAL_SECS: u64 = 30;
+
+/// Cooldown after a failed connection attempt (5 minutes).
+pub const FAILED_ADDR_COOLDOWN_SECS: u64 = 5 * 60;
+
+/// Maximum age for an address before considered stale (30 days).
+pub const ADDR_MAX_AGE_SECS: u64 = 30 * 24 * 60 * 60;
+
+/// Delay before sending GetAddr after handshake (2 seconds).
+pub const GETADDR_DELAY_SECS: u64 = 2;
+
+/// Maximum addresses to store in address manager.
+pub const MAX_KNOWN_ADDRS: usize = 10_000;
 
 // ============================================================================
 // Mining Constants

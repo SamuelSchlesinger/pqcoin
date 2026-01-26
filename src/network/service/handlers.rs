@@ -5,11 +5,12 @@
 
 use crate::blockchain::{Block, Blockchain, Transaction};
 use crate::mempool::Mempool;
-use crate::network::message::{InvItem, Message};
+use crate::network::message::{InvItem, Message, Services};
 use crate::network::service::events::NetworkEvent;
 use crate::network::service::state::{NetworkState, PeerCommand, PeerMessage};
 use crate::network::sync::SyncManager;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::{RwLock, mpsc};
 
 /// Handles a message from a peer task by dispatching to the appropriate handler.
@@ -23,7 +24,7 @@ pub(crate) async fn handle_peer_message(
 ) {
     match msg {
         PeerMessage::HandshakeComplete { peer_id, height } => {
-            handle_handshake_complete(peer_id, height, state).await;
+            handle_handshake_complete(peer_id, height, state, sync).await;
         }
         PeerMessage::Received { peer_id, message } => {
             handle_message(peer_id, message, state, blockchain, mempool, sync, event_tx).await;
@@ -35,11 +36,37 @@ pub(crate) async fn handle_peer_message(
 }
 
 /// Handle a successful handshake completion.
-async fn handle_handshake_complete(peer_id: u64, height: u64, state: &Arc<RwLock<NetworkState>>) {
-    let mut state = state.write().await;
-    if let Some(info) = state.peers.get_mut(&peer_id) {
-        info.height = height;
-        tracing::debug!(peer_id = peer_id, height = height, "updated peer height");
+async fn handle_handshake_complete(
+    peer_id: u64,
+    height: u64,
+    state: &Arc<RwLock<NetworkState>>,
+    sync: &Arc<RwLock<SyncManager>>,
+) {
+    {
+        let mut state_guard = state.write().await;
+        if let Some(info) = state_guard.peers.get_mut(&peer_id) {
+            info.height = height;
+            let addr = info.addr;
+            tracing::debug!(peer_id = peer_id, height = height, "updated peer height");
+
+            // Mark address as good in address manager
+            state_guard.addr_manager.mark_good(&addr);
+
+            // Schedule GetAddr after delay
+            state_guard.pending_getaddr.insert(peer_id, Instant::now());
+        }
+    }
+
+    // Try to start sync immediately if this peer is ahead of us
+    // This avoids waiting for the next sync interval tick
+    let get_headers_msg = {
+        let mut sync_guard = sync.write().await;
+        sync_guard.maybe_start_sync(peer_id, height).await
+    };
+
+    // Send GetHeaders if sync was started
+    if let Some(msg) = get_headers_msg {
+        send_to_peer(peer_id, msg, state).await;
     }
 }
 
@@ -67,11 +94,11 @@ pub(crate) async fn handle_message(
         }
 
         Message::Addr { addrs } => {
-            handle_addr(addrs, state).await;
+            handle_addr(peer_id, addrs, state).await;
         }
 
         Message::AddrV2 { addrs } => {
-            handle_addr_v2(addrs, state).await;
+            handle_addr_v2(peer_id, addrs, state).await;
         }
 
         Message::SendHeaders => {
@@ -130,39 +157,112 @@ async fn handle_ping(peer_id: u64, nonce: u64, state: &Arc<RwLock<NetworkState>>
     send_to_peer(peer_id, Message::Pong(nonce), state).await;
 }
 
+/// Minimum interval between GetAddr responses to same peer (seconds).
+const GETADDR_RESPONSE_INTERVAL_SECS: u64 = 60;
+
 /// Handle a GetAddr message by sending known addresses.
+/// Rate-limited to prevent bandwidth amplification attacks.
 async fn handle_get_addr(peer_id: u64, state: &Arc<RwLock<NetworkState>>) {
-    let state_guard = state.read().await;
-    let addrs: Vec<std::net::SocketAddr> =
-        state_guard.known_addrs.iter().take(1000).cloned().collect();
-    drop(state_guard);
-    send_to_peer(peer_id, Message::Addr { addrs }, state).await;
+    let now = std::time::Instant::now();
+
+    // Check rate limit and update last response time
+    let should_respond = {
+        let mut state_guard = state.write().await;
+        if let Some(last_time) = state_guard.last_getaddr_response.get(&peer_id) {
+            if now.duration_since(*last_time)
+                < std::time::Duration::from_secs(GETADDR_RESPONSE_INTERVAL_SECS)
+            {
+                tracing::debug!(peer_id = peer_id, "rate limiting GetAddr response");
+                return;
+            }
+        }
+        state_guard.last_getaddr_response.insert(peer_id, now);
+        true
+    };
+
+    if !should_respond {
+        return;
+    }
+
+    let addrs = {
+        let state_guard = state.read().await;
+        state_guard.addr_manager.get_addrs_for_relay(1000)
+    };
+    tracing::debug!(
+        peer_id = peer_id,
+        count = addrs.len(),
+        "responding to GetAddr"
+    );
+    send_to_peer(peer_id, Message::AddrV2 { addrs }, state).await;
 }
 
 /// Handle an Addr message by storing new addresses.
-async fn handle_addr(addrs: Vec<std::net::SocketAddr>, state: &Arc<RwLock<NetworkState>>) {
-    let mut state_guard = state.write().await;
-    for addr in addrs {
-        if !state_guard.known_addrs.contains(&addr) {
-            state_guard.known_addrs.push(addr);
+async fn handle_addr(
+    peer_id: u64,
+    addrs: Vec<std::net::SocketAddr>,
+    state: &Arc<RwLock<NetworkState>>,
+) {
+    let source = {
+        let state_guard = state.read().await;
+        state_guard.peers.get(&peer_id).map(|p| p.addr)
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let mut added = 0;
+    {
+        let mut state_guard = state.write().await;
+        for addr in addrs {
+            if state_guard
+                .addr_manager
+                .add_addr(addr, Services::NODE_NETWORK, now, source)
+            {
+                added += 1;
+            }
         }
+    }
+
+    if added > 0 {
+        tracing::debug!(
+            peer_id = peer_id,
+            added = added,
+            "added addresses from Addr message"
+        );
     }
 }
 
 /// Handle an AddrV2 message by storing new addresses (filtering stale ones).
 async fn handle_addr_v2(
+    peer_id: u64,
     addrs: Vec<crate::network::message::TimestampedAddr>,
     state: &Arc<RwLock<NetworkState>>,
 ) {
-    let current_time = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let mut state_guard = state.write().await;
-    for taddr in addrs {
-        if !taddr.is_stale(current_time) && !state_guard.known_addrs.contains(&taddr.addr) {
-            state_guard.known_addrs.push(taddr.addr);
+    // Get source address, returning early if peer disconnected
+    let source = {
+        let state_guard = state.read().await;
+        match state_guard.peers.get(&peer_id) {
+            Some(p) => p.addr,
+            None => {
+                tracing::debug!(peer_id = peer_id, "ignoring AddrV2 from disconnected peer");
+                return;
+            }
         }
+    };
+
+    let added = {
+        let mut state_guard = state.write().await;
+        state_guard.addr_manager.add_addrs(addrs, source)
+    };
+
+    if added > 0 {
+        tracing::debug!(
+            peer_id = peer_id,
+            added = added,
+            "added addresses from AddrV2 message"
+        );
     }
 }
 
@@ -351,6 +451,7 @@ pub(crate) async fn handle_disconnect(
         let mut state_guard = state.write().await;
         let info = state_guard.peers.remove(&peer_id);
         state_guard.peer_senders.remove(&peer_id);
+        state_guard.last_getaddr_response.remove(&peer_id);
 
         if let Some(info) = &info {
             state_guard.connected_addrs.remove(&info.addr);

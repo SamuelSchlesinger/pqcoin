@@ -608,7 +608,7 @@ Signature & 4,627 & 64 \\
 
 \subsection{Block Capacity}
 
-With 16 MB maximum block size and larger signatures, the effective block capacity is shown in Table~\ref{tab:block-capacity}.
+With 32 MB maximum block size and larger signatures, the effective block capacity is shown in Table~\ref{tab:block-capacity}.
 
 \begin{table}[ht]
 \centering
@@ -618,11 +618,11 @@ With 16 MB maximum block size and larger signatures, the effective block capacit
 \toprule
 Metric & Value \\
 \midrule
-Max block size & 16 MB \\
-Max transactions per block & 1,000 \\
+Max block size & 32 MB \\
+Max transactions per block & 4,200 \\
 Average P2PKH tx size (1-in, 2-out) & $\sim$7,500 bytes \\
-Theoretical max txs at avg size & $\sim$2,200 \\
-Effective limit (protocol) & 1,000 \\
+Theoretical max txs at avg size & $\sim$4,400 \\
+Effective limit (protocol) & 4,200 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -632,20 +632,20 @@ Effective limit (protocol) & 1,000 \\
 Transaction throughput at 10-minute block intervals:
 
 \begin{equation}
-\text{TPS} = \frac{\text{MAX\_BLOCK\_TXS}}{\text{TARGET\_BLOCK\_TIME}} = \frac{1000}{600} \approx 1.67 \text{ TPS}
+\text{TPS} = \frac{\text{MAX\_BLOCK\_TXS}}{\text{TARGET\_BLOCK\_TIME}} = \frac{4200}{600} = 7 \text{ TPS}
 \end{equation}
 
-This compares to Bitcoin's $\sim$7 TPS theoretical maximum. The reduction reflects the deliberate trade-off for quantum security.
+This matches Bitcoin's $\sim$7 TPS theoretical maximum, maintaining equivalent throughput despite the larger post-quantum signatures.
 
 \subsection{Storage Costs}
 
 Annual blockchain growth assuming full blocks:
 
 \begin{equation}
-\text{Annual growth} = \frac{16 \text{ MB} \times 6 \times 24 \times 365}{1000} \approx 841 \text{ GB/year}
+\text{Annual growth} = \frac{32 \text{ MB} \times 6 \times 24 \times 365}{1000} \approx 1.68 \text{ TB/year}
 \end{equation}
 
-This necessitates pruning strategies and efficient storage for full nodes.
+This necessitates pruning strategies and efficient storage for full nodes. The increased storage cost (approximately 2$\times$ Bitcoin's growth rate) is the direct trade-off for quantum security with equivalent throughput.
 
 \subsection{Fee Market Implications}
 
@@ -910,11 +910,11 @@ D. J. Bernstein and T. Lange, ``Post-Quantum Cryptography,'' \textit{Nature}, vo
 
 \begin{lstlisting}
 // Protocol
-MAX_BLOCK_TXS = 1,000
+MAX_BLOCK_TXS = 4,200
 MAX_TX_INPUTS = 10,000
 MAX_TX_OUTPUTS = 10,000
 MAX_MULTISIG_KEYS = 15
-MAX_BLOCK_SIZE = 16 MB
+MAX_BLOCK_SIZE = 32 MB
 COINBASE_MATURITY = 100 blocks
 MAX_REORG_DEPTH = 100 blocks
 MAX_FUTURE_BLOCK_TIME = 2 hours

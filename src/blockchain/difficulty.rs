@@ -68,6 +68,8 @@ pub(crate) fn expected_difficulty_at(
 
     // At adjustment boundary - need to calculate new difficulty
     // Find the block at the start of this adjustment period
+    // Use interval - 1 because we're calculating from prev_block (height - 1)
+    // E.g., at height 2016, we want blocks 0..2015 (2016 blocks)
     let period_start_height = height.saturating_sub(difficulty_adjustment_interval);
     let mut block_hash = prev_hash;
 
@@ -114,7 +116,9 @@ pub(crate) fn calculate_new_difficulty(
     let exponent = current_bits >> 24;
     let coefficient = (current_bits & DIFFICULTY_COEFFICIENT_MASK) as u64;
 
-    let scaled = (coefficient * actual_time) / target_time;
+    // Use u128 arithmetic to prevent overflow when coefficient * actual_time exceeds u64 max
+    // coefficient can be up to 0x7FFFFF (8388607) and actual_time can be large
+    let scaled = ((coefficient as u128 * actual_time as u128) / target_time as u128) as u64;
 
     // Minimum coefficient threshold to maintain precision
     const MIN_COEFFICIENT: u64 = 0x8000;

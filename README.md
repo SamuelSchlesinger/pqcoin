@@ -111,7 +111,7 @@ path = "/custom/path/to/data"
 | Difficulty adjustment | Every 2,016 blocks |
 | Initial reward | 50 coins |
 | Halving interval | 210,000 blocks |
-| Max block size | 16 MB |
+| Max block size | 32 MB |
 | Coinbase maturity | 100 blocks |
 
 ## Cryptographic Parameters

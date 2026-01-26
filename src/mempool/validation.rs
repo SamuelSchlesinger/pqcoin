@@ -1,6 +1,6 @@
 //! Transaction validation for mempool inclusion.
 
-use crate::blockchain::{Blockchain, LockingCondition, Transaction, TxOutput, Witness};
+use crate::blockchain::{Blockchain, LockingCondition, Transaction, TxOutput, Witness, dust_limit};
 use crate::crypto::{hash, ml_dsa_87};
 
 use super::Mempool;
@@ -35,8 +35,18 @@ pub(crate) fn validate_mempool_tx(
         total_in += utxo.output.amount;
     }
 
-    for output in &tx.outputs {
+    for (index, output) in tx.outputs.iter().enumerate() {
         total_out += output.amount;
+
+        // Check for dust outputs
+        let limit = dust_limit(&output.condition);
+        if output.amount < limit {
+            return Err(MempoolError::DustOutput {
+                index,
+                amount: output.amount,
+                limit,
+            });
+        }
     }
 
     if total_out > total_in {

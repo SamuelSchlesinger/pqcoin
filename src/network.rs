@@ -69,7 +69,9 @@ pub use message::{
     NETWORK_MAGIC, PROTOCOL_VERSION, Services, TimestampedAddr,
 };
 pub use peer::{HEADER_SIZE, MAX_MESSAGE_SIZE, Peer, PeerError, PeerHandle, PeerInfo, PeerState};
-pub use service::{NetworkConfig, NetworkError, NetworkEvent, NetworkService};
+pub use service::{
+    NetworkConfig, NetworkError, NetworkEvent, NetworkService, NetworkState, PeerCommand,
+};
 pub use sync::{SyncError, SyncManager, SyncState};
 
 // Re-export constants from the centralized constants module

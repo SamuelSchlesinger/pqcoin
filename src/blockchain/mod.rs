@@ -72,6 +72,7 @@ mod tests;
 pub use address::Address;
 pub use block::Block;
 pub use chain::Blockchain;
+pub(crate) use dust::dust_limit;
 pub use error::BlockchainError;
 pub use genesis::create_genesis_block;
 pub use header::BlockHeader;

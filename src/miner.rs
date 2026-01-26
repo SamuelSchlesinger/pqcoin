@@ -77,11 +77,17 @@ pub fn mine_block(
     // Get transactions from mempool, sorted by fee rate (highest first)
     let mut txs = mempool.get_block_txs_with_fees(MAX_BLOCK_TXS, blockchain);
 
-    // Calculate fees
-    let fees: u64 = txs.iter().map(|tx| calculate_fee(tx, blockchain)).sum();
+    // Calculate fees with overflow protection
+    let fees: u64 = txs
+        .iter()
+        .try_fold(0u64, |acc, tx| {
+            acc.checked_add(calculate_fee(tx, blockchain))
+        })
+        .unwrap_or(u64::MAX);
 
-    // Create coinbase transaction
-    let coinbase = Transaction::coinbase(height, reward + fees, miner_address);
+    // Create coinbase transaction with overflow protection
+    let coinbase_amount = reward.checked_add(fees).unwrap_or(u64::MAX);
+    let coinbase = Transaction::coinbase(height, coinbase_amount, miner_address);
     txs.insert(0, coinbase);
 
     // Get difficulty
