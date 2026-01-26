@@ -46,15 +46,15 @@ async fn test_node_restart_recovers_state() {
     let new_ports = find_available_ports(1).await.expect("failed to find ports");
     let new_port = new_ports[0];
 
-    // Restart the node
-    let restarted = restart_info
-        .restart(new_port, vec![], genesis)
+    // Restart the node in isolated mode (no networking needed for this test)
+    let isolated = restart_info
+        .restart_isolated(new_port, genesis)
         .await
         .expect("failed to restart node");
 
     // Verify state was recovered
-    let height_after = restarted.height().await;
-    let tip_after = restarted.tip_hash().await;
+    let height_after = isolated.height().await;
+    let tip_after = isolated.tip_hash().await;
 
     assert_eq!(
         height_after, height_before,
@@ -64,8 +64,6 @@ async fn test_node_restart_recovers_state() {
         tip_after, tip_before,
         "tip hash should be preserved after restart"
     );
-
-    restarted.shutdown().await;
 }
 
 /// Test that a restarted node can continue mining.
@@ -88,16 +86,22 @@ async fn test_restarted_node_can_mine() {
     }
     assert_eq!(node.height().await, 3);
 
-    // Shutdown and restart
+    // Shutdown and restart in isolated mode first to verify persistence
     let restart_info = node.shutdown_for_restart().await;
 
     let new_ports = find_available_ports(1).await.expect("failed to find ports");
-    let restarted = restart_info
-        .restart(new_ports[0], vec![], genesis)
+    let isolated = restart_info
+        .restart_isolated(new_ports[0], genesis.clone())
         .await
-        .expect("failed to restart");
+        .expect("failed to restart isolated");
 
-    assert_eq!(restarted.height().await, 3, "should start at height 3");
+    assert_eq!(isolated.height().await, 3, "should start at height 3");
+
+    // Start networking to enable mining (mining requires network service)
+    let restarted = isolated
+        .start_networking(vec![])
+        .await
+        .expect("failed to start networking");
 
     // Mine 2 more blocks after restart
     for _ in 0..2 {
@@ -163,38 +167,36 @@ async fn test_restarted_node_syncs_missed_blocks() {
     }
     assert_eq!(node0.height().await, 5, "node 0 should be at height 5");
 
-    // Restart node 1 without seed peers first to verify persistence
+    // Phase 1: Restart without networking to verify persistence (race-free)
     let new_ports = find_available_ports(1).await.expect("failed to find ports");
-    let restarted = restart_info
-        .restart(new_ports[0], vec![], genesis.clone())
+    let isolated = restart_info
+        .restart_isolated(new_ports[0], genesis.clone())
         .await
-        .expect("failed to restart");
+        .expect("failed to restart isolated");
 
     // Verify persistence - height should be 3 from before shutdown
-    // (no seed peers, so no sync should have happened)
-    let initial_height = restarted.height().await;
+    // This is race-free because no networking is running
     assert_eq!(
-        initial_height, 3,
-        "should start at pre-shutdown height {initial_height}"
+        isolated.height().await,
+        3,
+        "persistence check: should start at pre-shutdown height"
     );
 
-    // Now shutdown and restart with connection to node0 for sync
-    let restart_info2 = restarted.shutdown_for_restart().await;
-
-    let new_ports2 = find_available_ports(1).await.expect("failed to find ports");
-    let restarted = restart_info2
-        .restart(new_ports2[0], vec![node0_addr], genesis)
+    // Phase 2: Start networking and sync
+    let mut restarted = isolated
+        .start_networking(vec![node0_addr])
         .await
-        .expect("failed to restart with seed peer");
+        .expect("failed to start networking");
 
-    // Wait for connection and sync - immediate sync is triggered on peer connect
-    sleep(Duration::from_millis(2000)).await;
+    // Wait for sync to complete using event-driven waiting
+    let synced = restarted.wait_for_sync_complete(DEFAULT_TIMEOUT).await;
+    assert!(synced, "should have synced within timeout");
 
     // Should have synced to height 5
     let final_height = restarted.height().await;
     assert_eq!(
         final_height, 5,
-        "should have synced to height 5, got {final_height}"
+        "sync check: should have synced to height 5, got {final_height}"
     );
 
     // Verify same tip
@@ -228,34 +230,38 @@ async fn test_multiple_restarts() {
 
     let restart_info = node.shutdown_for_restart().await;
 
-    // Second cycle: restart and mine 2 more
+    // Second cycle: restart isolated, verify, then start networking to mine
     let new_ports = find_available_ports(1).await.expect("failed to find ports");
-    let node = restart_info
-        .restart(new_ports[0], vec![], genesis.clone())
+    let isolated = restart_info
+        .restart_isolated(new_ports[0], genesis.clone())
         .await
-        .expect("failed to restart");
+        .expect("failed to restart isolated");
 
-    assert_eq!(node.height().await, 2);
+    assert_eq!(isolated.height().await, 2, "persistence check cycle 2");
+
+    let node = isolated
+        .start_networking(vec![])
+        .await
+        .expect("failed to start networking");
+
     node.mine_and_submit_block().await;
     node.mine_and_submit_block().await;
     assert_eq!(node.height().await, 4);
 
     let restart_info = node.shutdown_for_restart().await;
 
-    // Third cycle: restart and verify
+    // Third cycle: restart isolated and verify final state
     let new_ports = find_available_ports(1).await.expect("failed to find ports");
-    let node = restart_info
-        .restart(new_ports[0], vec![], genesis)
+    let isolated = restart_info
+        .restart_isolated(new_ports[0], genesis)
         .await
-        .expect("failed to restart");
+        .expect("failed to restart isolated");
 
     assert_eq!(
-        node.height().await,
+        isolated.height().await,
         4,
         "height should persist through multiple restarts"
     );
-
-    node.shutdown().await;
 }
 
 /// Test that UTXO state is preserved across restart.
@@ -289,20 +295,30 @@ async fn test_utxo_state_preserved() {
 
     let restart_info = node.shutdown_for_restart().await;
 
-    // Restart
+    // Restart in isolated mode first to verify persistence
     let new_ports = find_available_ports(1).await.expect("failed to find ports");
-    let node = restart_info
-        .restart(new_ports[0], vec![], genesis)
+    let isolated = restart_info
+        .restart_isolated(new_ports[0], genesis.clone())
         .await
-        .expect("failed to restart");
+        .expect("failed to restart isolated");
 
-    // Verify chain state is preserved
+    // Verify chain state is preserved (race-free check)
     assert_eq!(
-        node.height().await,
+        isolated.height().await,
         height_before,
         "height should be preserved"
     );
-    assert_eq!(node.tip_hash().await, tip_before, "tip should be preserved");
+    assert_eq!(
+        isolated.tip_hash().await,
+        tip_before,
+        "tip should be preserved"
+    );
+
+    // Start networking to test UTXO functionality
+    let node = isolated
+        .start_networking(vec![])
+        .await
+        .expect("failed to start networking");
 
     // Verify UTXO set is preserved (we still have mature UTXOs)
     let utxo_after = node.find_mature_utxo().await;

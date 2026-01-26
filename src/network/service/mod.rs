@@ -98,7 +98,10 @@ impl NetworkService {
         let (peer_msg_tx, peer_msg_rx) = mpsc::channel(1000);
         let (block_submit_tx, block_submit_rx) = mpsc::channel(100);
 
-        let sync = Arc::new(RwLock::new(SyncManager::new(blockchain.clone())));
+        let sync = Arc::new(RwLock::new(SyncManager::new(
+            blockchain.clone(),
+            event_tx.clone(),
+        )));
         let mempool = Arc::new(RwLock::new(Mempool::new()));
 
         Self {

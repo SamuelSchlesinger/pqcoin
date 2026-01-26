@@ -12,10 +12,11 @@ use crate::constants::{
 };
 use crate::crypto::Hash;
 use crate::network::message::{InvItem, InvType, Message};
+use crate::network::service::NetworkEvent;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, mpsc};
 
 /// Timeout for block downloads (30 seconds).
 const BLOCK_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30);
@@ -93,11 +94,13 @@ pub struct SyncManager {
     best_known_height: u64,
     /// Peer with the best chain.
     best_peer: Option<u64>,
+    /// Event sender for notifying about sync state changes.
+    event_tx: mpsc::Sender<NetworkEvent>,
 }
 
 impl SyncManager {
     /// Create a new sync manager.
-    pub fn new(blockchain: Arc<RwLock<Blockchain>>) -> Self {
+    pub fn new(blockchain: Arc<RwLock<Blockchain>>, event_tx: mpsc::Sender<NetworkEvent>) -> Self {
         Self {
             blockchain,
             state: SyncState::Idle,
@@ -111,6 +114,7 @@ impl SyncManager {
             synced_peers: HashSet::new(),
             best_known_height: 0,
             best_peer: None,
+            event_tx,
         }
     }
 
@@ -149,11 +153,15 @@ impl SyncManager {
         self.state
     }
 
-    /// Set the sync state.
+    /// Set the sync state and emit an event if it changed.
     pub fn set_state(&mut self, state: SyncState) {
         if self.state != state {
             tracing::debug!(old = ?self.state, new = ?state, "sync state transition");
             self.state = state;
+            // Emit state change event (non-blocking to avoid slowing sync)
+            let _ = self
+                .event_tx
+                .try_send(NetworkEvent::SyncStateChanged(state));
         }
     }
 
@@ -203,7 +211,7 @@ impl SyncManager {
             "starting immediate sync on peer connect"
         );
 
-        self.state = SyncState::DownloadingHeaders;
+        self.set_state(SyncState::DownloadingHeaders);
         self.active_sync_peer = Some(peer_id);
 
         Some(self.create_get_headers_message().await)
@@ -267,12 +275,12 @@ impl SyncManager {
         if headers.is_empty() {
             // No more headers, switch to downloading blocks or check if synced
             if !self.pending_headers.is_empty() {
-                self.state = SyncState::DownloadingBlocks;
+                self.set_state(SyncState::DownloadingBlocks);
             } else if !self.blocks_in_flight.is_empty() {
                 // Still waiting for blocks - stay in DownloadingBlocks
-                self.state = SyncState::DownloadingBlocks;
+                self.set_state(SyncState::DownloadingBlocks);
             } else {
-                self.state = SyncState::Synced;
+                self.set_state(SyncState::Synced);
             }
             self.synced_peers.insert(peer_id);
             return Ok(vec![]);
@@ -352,10 +360,10 @@ impl SyncManager {
         // Otherwise, we've received all headers and should download blocks
         // Using accepted_count prevents infinite loop when pending_headers is near capacity
         if headers_len >= MAX_HEADERS_COUNT && accepted_count == headers_len {
-            self.state = SyncState::DownloadingHeaders;
+            self.set_state(SyncState::DownloadingHeaders);
             responses.push(self.create_get_headers_message().await);
         } else {
-            self.state = SyncState::DownloadingBlocks;
+            self.set_state(SyncState::DownloadingBlocks);
         }
 
         Ok(responses)
@@ -412,7 +420,7 @@ impl SyncManager {
 
         // Check if we're done syncing
         if self.pending_headers.is_empty() && self.blocks_in_flight.is_empty() {
-            self.state = SyncState::Synced;
+            self.set_state(SyncState::Synced);
         }
 
         result.map(|(added, _)| added)
@@ -744,10 +752,15 @@ mod tests {
         Arc::new(RwLock::new(blockchain))
     }
 
+    fn create_test_event_tx() -> mpsc::Sender<NetworkEvent> {
+        let (tx, _rx) = mpsc::channel(100);
+        tx
+    }
+
     #[tokio::test]
     async fn test_build_locator() {
         let blockchain = create_test_blockchain();
-        let sync = SyncManager::new(blockchain);
+        let sync = SyncManager::new(blockchain, create_test_event_tx());
         let locator = sync.build_locator().await;
         assert!(!locator.is_empty());
     }
@@ -755,7 +768,7 @@ mod tests {
     #[tokio::test]
     async fn test_sync_state_transitions() {
         let blockchain = create_test_blockchain();
-        let mut sync = SyncManager::new(blockchain);
+        let mut sync = SyncManager::new(blockchain, create_test_event_tx());
         assert_eq!(sync.state(), SyncState::Idle);
 
         // Empty headers response should transition to synced

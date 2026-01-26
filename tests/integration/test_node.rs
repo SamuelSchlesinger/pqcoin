@@ -8,7 +8,7 @@ use pqcoin::crypto::{self, Hash, PublicKey, SecretKey, ml_dsa_87};
 use pqcoin::mempool::Mempool;
 use pqcoin::miner::{MineResult, mine_block};
 use pqcoin::network::{
-    NetworkConfig, NetworkError, NetworkEvent, NetworkService, NetworkState, PeerCommand,
+    NetworkConfig, NetworkError, NetworkEvent, NetworkService, NetworkState, PeerCommand, SyncState,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -208,6 +208,87 @@ impl TestNode {
             events.push(event);
         }
         events
+    }
+
+    /// Wait for an event matching the predicate.
+    ///
+    /// Returns the matching event if found within the timeout, None otherwise.
+    pub async fn wait_for_event<P>(
+        &mut self,
+        predicate: P,
+        timeout_duration: Duration,
+    ) -> Option<NetworkEvent>
+    where
+        P: Fn(&NetworkEvent) -> bool,
+    {
+        let deadline = tokio::time::Instant::now() + timeout_duration;
+
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return None;
+            }
+
+            match timeout(remaining, self.event_rx.recv()).await {
+                Ok(Some(event)) => {
+                    if predicate(&event) {
+                        return Some(event);
+                    }
+                    // Not matching, continue waiting
+                }
+                Ok(None) => return None, // Channel closed
+                Err(_) => return None,   // Timeout
+            }
+        }
+    }
+
+    /// Wait for sync to complete.
+    ///
+    /// Returns true if sync completed within the timeout, false otherwise.
+    pub async fn wait_for_sync_complete(&mut self, timeout_duration: Duration) -> bool {
+        self.wait_for_event(
+            |e| matches!(e, NetworkEvent::SyncStateChanged(SyncState::Synced)),
+            timeout_duration,
+        )
+        .await
+        .is_some()
+    }
+
+    /// Wait for N peer connections.
+    ///
+    /// Returns true if N peers connected within the timeout, false otherwise.
+    #[allow(dead_code)]
+    pub async fn wait_for_n_peers(&mut self, n: usize, timeout_duration: Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + timeout_duration;
+        let mut _connected = 0;
+
+        loop {
+            // Check current peer count
+            let current_peers = self.peer_count().await;
+            if current_peers >= n {
+                return true;
+            }
+
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+
+            // Wait for a peer connection event
+            match timeout(remaining, self.event_rx.recv()).await {
+                Ok(Some(NetworkEvent::PeerConnected { .. })) => {
+                    _connected += 1;
+                    if self.peer_count().await >= n {
+                        return true;
+                    }
+                }
+                Ok(Some(_)) => {
+                    // Other event, continue waiting
+                }
+                Ok(None) => return false, // Channel closed
+                Err(_) => return false,   // Timeout
+            }
+        }
     }
 
     /// Submit a mined block to the network.
@@ -506,6 +587,30 @@ impl RestartInfo {
         )
         .await
     }
+
+    /// Restart the node without networking (for persistence verification).
+    ///
+    /// This creates an IsolatedNode that can be used to verify the persistent
+    /// blockchain state before any sync happens. Call `start_networking()` on
+    /// the returned node to begin syncing.
+    pub async fn restart_isolated(
+        mut self,
+        port: u16,
+        genesis: Block,
+    ) -> Result<IsolatedNode, Box<dyn std::error::Error + Send + Sync>> {
+        // Take ownership of values before self is dropped
+        let storage_path = std::mem::take(&mut self.storage_path);
+        let keypair = std::mem::replace(&mut self.keypair, ml_dsa_87::keygen()); // Dummy replacement
+        let miner_address = self.miner_address;
+        let id = self.id;
+
+        // Mark as consumed so Drop doesn't delete the directory
+        self.storage_path = std::path::PathBuf::new(); // Empty path won't delete anything meaningful
+
+        let storage_dir = StorageDir::Persistent(storage_path);
+        IsolatedNode::create_with_storage(id, port, genesis, storage_dir, keypair, miner_address)
+            .await
+    }
 }
 
 impl Drop for RestartInfo {
@@ -523,5 +628,149 @@ impl Drop for TestNode {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
+    }
+}
+
+/// A node created without networking, for staged startup.
+///
+/// This allows verifying persistent state before networking starts,
+/// eliminating race conditions where sync completes before assertions.
+pub struct IsolatedNode {
+    /// Node identifier for debugging.
+    pub id: usize,
+    /// Reference to the blockchain.
+    pub blockchain: Arc<RwLock<Blockchain>>,
+    /// Storage directory (kept alive for the node's lifetime).
+    storage_dir: StorageDir,
+    /// Miner address for this node.
+    pub miner_address: Address,
+    /// Keypair for signing transactions.
+    pub keypair: (PublicKey, SecretKey),
+    /// The listen address to use when networking starts.
+    listen_addr: SocketAddr,
+}
+
+impl IsolatedNode {
+    /// Create a node with blockchain loaded but no networking.
+    ///
+    /// This allows querying the blockchain state without any possibility
+    /// of sync happening in the background.
+    #[allow(dead_code)]
+    pub async fn create(
+        id: usize,
+        port: u16,
+        genesis: Block,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        // Create temporary storage directory
+        let storage_dir = StorageDir::Temp(TempDir::new()?);
+
+        // Generate keypair for this node
+        let keypair = ml_dsa_87::keygen();
+        let miner_address = Address::from_public_key(&keypair.0);
+
+        Self::create_with_storage(id, port, genesis, storage_dir, keypair, miner_address).await
+    }
+
+    /// Create an isolated node with specific storage and keypair.
+    pub async fn create_with_storage(
+        id: usize,
+        port: u16,
+        genesis: Block,
+        storage_dir: StorageDir,
+        keypair: (PublicKey, SecretKey),
+        miner_address: Address,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        // Create blockchain with persistent storage (like production)
+        let blockchain = Blockchain::open(
+            storage_dir.path(),
+            genesis,
+            2016,       // difficulty_adjustment_interval
+            600,        // target_block_time
+            50_000_000, // initial_reward
+            210_000,    // halving_interval
+        )?;
+        let blockchain = Arc::new(RwLock::new(blockchain));
+
+        let listen_addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+
+        Ok(Self {
+            id,
+            blockchain,
+            storage_dir,
+            miner_address,
+            keypair,
+            listen_addr,
+        })
+    }
+
+    /// Get the current blockchain height.
+    pub async fn height(&self) -> u64 {
+        self.blockchain.read().await.height()
+    }
+
+    /// Get the tip hash.
+    pub async fn tip_hash(&self) -> Hash {
+        self.blockchain.read().await.tip_hash()
+    }
+
+    /// Get the listen address that will be used when networking starts.
+    #[allow(dead_code)]
+    pub fn addr(&self) -> SocketAddr {
+        self.listen_addr
+    }
+
+    /// Start networking and convert to a full TestNode.
+    ///
+    /// This consumes the IsolatedNode and starts the network service,
+    /// connecting to the specified seed peers.
+    pub async fn start_networking(
+        self,
+        seed_peers: Vec<SocketAddr>,
+    ) -> Result<TestNode, Box<dyn std::error::Error + Send + Sync>> {
+        // Configure network
+        let config = NetworkConfig {
+            listen_addr: self.listen_addr,
+            max_peers: 50,
+            max_outbound: 25,
+            seed_peers,
+        };
+
+        // Create network service with existing blockchain and mempool
+        let mut service = NetworkService::new(self.blockchain.clone(), config);
+
+        // Take receivers and shared state before starting
+        let event_rx = service
+            .take_event_receiver()
+            .expect("event receiver already taken");
+        let block_submitter = service.block_submitter();
+        let network_state = service.state();
+
+        // Replace our mempool with the service's mempool (they need to share the same one)
+        let mempool = service.mempool();
+
+        // Create shutdown channel
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+
+        // Start the service
+        let service_handle =
+            tokio::spawn(async move { service.run_with_shutdown(shutdown_rx).await });
+
+        // Wait for service to start
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        Ok(TestNode {
+            id: self.id,
+            blockchain: self.blockchain,
+            mempool,
+            network_state,
+            listen_addr: self.listen_addr,
+            event_rx,
+            block_submitter,
+            shutdown_tx: Some(shutdown_tx),
+            service_handle: Some(service_handle),
+            storage_dir: self.storage_dir,
+            miner_address: self.miner_address,
+            keypair: self.keypair,
+        })
     }
 }
