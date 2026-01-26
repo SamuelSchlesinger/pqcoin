@@ -49,5 +49,31 @@ else
     echo "Warning: pdflatex not found, skipping whitepaper build"
 fi
 
+# Validate roadmap if any roadmap files changed
+if git diff --cached --name-only | grep -qE '(^roadmap/|^ROADMAP\.md)'; then
+    echo "Validating roadmap..."
+    if [ -f "scripts/roadmap-validate.sh" ]; then
+        ./scripts/roadmap-validate.sh
+        if [ $? -ne 0 ]; then
+            echo ""
+            echo "Roadmap validation failed. Please fix errors before committing."
+            exit 1
+        fi
+    fi
+fi
+
+# Test roadmap scripts if any script changed
+if git diff --cached --name-only | grep -qE '^scripts/roadmap-.*\.sh$'; then
+    echo "Testing roadmap scripts..."
+    if [ -f "scripts/test-roadmap-scripts.sh" ]; then
+        ./scripts/test-roadmap-scripts.sh
+        if [ $? -ne 0 ]; then
+            echo ""
+            echo "Roadmap script tests failed. Please fix before committing."
+            exit 1
+        fi
+    fi
+fi
+
 echo "All checks passed!"
 exit 0
