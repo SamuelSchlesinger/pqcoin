@@ -858,7 +858,27 @@ impl NetworkService {
                 }
             }
             SyncState::Synced => {
-                // Already synced, nothing to do
+                // Check if any peer has gotten ahead of us (e.g., new blocks mined)
+                // If so, transition back to Idle to restart sync
+                let state = self.state.read().await;
+                let our_height = self.blockchain.read().await.height();
+
+                let best_peer_height = state
+                    .peers
+                    .values()
+                    .map(|info| info.height)
+                    .max()
+                    .unwrap_or(0);
+
+                if best_peer_height > our_height {
+                    drop(state);
+                    tracing::info!(
+                        our_height = our_height,
+                        best_peer_height = best_peer_height,
+                        "peer ahead, restarting sync"
+                    );
+                    sync.set_state(SyncState::Idle);
+                }
             }
         }
     }
