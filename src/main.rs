@@ -9,8 +9,8 @@ use pqcoin::blockchain::{Address, Blockchain, create_genesis_block};
 use pqcoin::config::Config;
 use pqcoin::config::NetworkType;
 use pqcoin::constants::{
-    DEFAULT_DIFFICULTY, HALVING_INTERVAL, INITIAL_REWARD, TEST_DIFFICULTY_INTERVAL,
-    TEST_TARGET_BLOCK_TIME, TESTNET_DIFFICULTY, TESTNET_GENESIS_TIMESTAMP,
+    DEFAULT_DIFFICULTY, HALVING_INTERVAL, INITIAL_REWARD, TESTNET_DIFFICULTY,
+    TESTNET_GENESIS_TIMESTAMP,
 };
 use pqcoin::crypto::ml_dsa_87;
 use pqcoin::miner::{BackgroundMiner, MineResult, mine_block};
@@ -202,17 +202,19 @@ async fn main() {
     );
 
     // Initialize the blockchain with persistent storage
-    // Use test constants for faster block times during development
     let storage_path = config.effective_storage_path();
+    let (difficulty_interval, target_block_time) = config.chain_params();
     tracing::info!(
         storage_path = %storage_path.display(),
+        target_block_time,
+        difficulty_interval,
         "opening blockchain storage"
     );
     let blockchain = match Blockchain::open(
         &storage_path,
         genesis,
-        TEST_DIFFICULTY_INTERVAL,
-        TEST_TARGET_BLOCK_TIME,
+        difficulty_interval,
+        target_block_time,
         INITIAL_REWARD,
         HALVING_INTERVAL,
     ) {

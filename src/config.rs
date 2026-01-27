@@ -10,7 +10,10 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use crate::constants::{DEFAULT_PORT, MAX_OUTBOUND, MAX_PEERS};
+use crate::constants::{
+    DEFAULT_PORT, DIFFICULTY_INTERVAL, MAX_OUTBOUND, MAX_PEERS, TARGET_BLOCK_TIME,
+    TEST_DIFFICULTY_INTERVAL, TEST_TARGET_BLOCK_TIME,
+};
 
 /// Network type (mainnet vs testnet).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -33,12 +36,32 @@ impl NetworkType {
     }
 }
 
+/// Chain parameters configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ChainConfig {
+    /// Target block time in seconds (default: 600 for 10 minutes).
+    #[serde(default)]
+    pub target_block_time: Option<u64>,
+
+    /// Difficulty adjustment interval in blocks (default: 2016).
+    #[serde(default)]
+    pub difficulty_interval: Option<u64>,
+
+    /// Enable fast blocks for testing (5s blocks, 10-block interval).
+    /// This overrides target_block_time and difficulty_interval.
+    #[serde(default)]
+    pub fast_blocks: bool,
+}
+
 /// Main configuration structure for the pqcoin node.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     /// Which network to connect to (mainnet or testnet).
     #[serde(default)]
     pub network_type: NetworkType,
+    /// Chain parameters (block time, difficulty interval).
+    #[serde(default)]
+    pub chain: ChainConfig,
     /// Network configuration.
     #[serde(default)]
     pub network: NetworkConfig,
@@ -256,6 +279,17 @@ impl Config {
             self.network_type = other.network_type;
         }
 
+        // Chain parameters
+        if other.chain.target_block_time.is_some() {
+            self.chain.target_block_time = other.chain.target_block_time;
+        }
+        if other.chain.difficulty_interval.is_some() {
+            self.chain.difficulty_interval = other.chain.difficulty_interval;
+        }
+        if other.chain.fast_blocks {
+            self.chain.fast_blocks = true;
+        }
+
         // Network
         if other.network.port != DEFAULT_PORT {
             self.network.port = other.network.port;
@@ -353,6 +387,17 @@ impl Config {
 # Testnet uses lower difficulty and separate data directory
 network_type = "mainnet"
 
+[chain]
+# Target block time in seconds (default: 600 = 10 minutes)
+# target_block_time = 600
+
+# Difficulty adjustment interval in blocks (default: 2016)
+# difficulty_interval = 2016
+
+# Enable fast blocks for quick local testing (5s blocks, 10-block intervals)
+# This overrides target_block_time and difficulty_interval
+# fast_blocks = false
+
 [network]
 # Port to listen on for P2P connections
 port = 8333
@@ -428,6 +473,27 @@ bind = "127.0.0.1"
             .unwrap_or_else(|| PathBuf::from("."))
             .join(self.network_type.data_dir_name())
             .join("data")
+    }
+
+    /// Get chain parameters (difficulty_interval, target_block_time).
+    ///
+    /// Priority:
+    /// 1. fast_blocks = true -> (10, 5) for quick local testing
+    /// 2. Explicit config values if set
+    /// 3. Mainnet defaults (2016, 600)
+    pub fn chain_params(&self) -> (u64, u64) {
+        // fast_blocks overrides everything for quick local testing
+        if self.chain.fast_blocks {
+            return (TEST_DIFFICULTY_INTERVAL, TEST_TARGET_BLOCK_TIME);
+        }
+
+        let target_block_time = self.chain.target_block_time.unwrap_or(TARGET_BLOCK_TIME);
+        let difficulty_interval = self
+            .chain
+            .difficulty_interval
+            .unwrap_or(DIFFICULTY_INTERVAL);
+
+        (difficulty_interval, target_block_time)
     }
 }
 
@@ -520,5 +586,52 @@ port = 8888
         assert!(config.rpc.enabled);
         assert_eq!(config.rpc.port, 8888);
         assert_eq!(config.rpc.bind, "0.0.0.0");
+    }
+
+    #[test]
+    fn test_chain_params_defaults() {
+        let config = Config::default();
+        let (interval, block_time) = config.chain_params();
+        // Default is mainnet params
+        assert_eq!(interval, DIFFICULTY_INTERVAL);
+        assert_eq!(block_time, TARGET_BLOCK_TIME);
+    }
+
+    #[test]
+    fn test_chain_params_fast_blocks() {
+        let mut config = Config::default();
+        config.chain.fast_blocks = true;
+        let (interval, block_time) = config.chain_params();
+        // fast_blocks overrides to test params
+        assert_eq!(interval, TEST_DIFFICULTY_INTERVAL);
+        assert_eq!(block_time, TEST_TARGET_BLOCK_TIME);
+    }
+
+    #[test]
+    fn test_chain_params_explicit() {
+        let toml_str = r#"
+[chain]
+target_block_time = 300
+difficulty_interval = 1000
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let (interval, block_time) = config.chain_params();
+        assert_eq!(interval, 1000);
+        assert_eq!(block_time, 300);
+    }
+
+    #[test]
+    fn test_chain_params_fast_blocks_overrides_explicit() {
+        let toml_str = r#"
+[chain]
+target_block_time = 300
+difficulty_interval = 1000
+fast_blocks = true
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let (interval, block_time) = config.chain_params();
+        // fast_blocks takes precedence
+        assert_eq!(interval, TEST_DIFFICULTY_INTERVAL);
+        assert_eq!(block_time, TEST_TARGET_BLOCK_TIME);
     }
 }

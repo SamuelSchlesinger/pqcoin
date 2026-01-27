@@ -1,0 +1,19 @@
+network_type = "testnet"
+
+[chain]
+# Match mainnet parameters for realistic testing
+target_block_time = 600    # 10 minutes
+difficulty_interval = 2016 # ~2 weeks between adjustments
+
+[network]
+port = 8333
+seed_peers = ["100.123.199.53:8333"]
+
+[mining]
+enabled = false
+
+[rpc]
+enabled = true
+port = 8332
+bind = "0.0.0.0"
+
