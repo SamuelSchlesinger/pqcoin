@@ -839,8 +839,17 @@ impl NetworkService {
             }
             SyncState::DownloadingBlocks => {
                 // Check if we need to request more blocks
+                // Pick the peer with the highest chain to ensure they have the blocks we need
                 let state = self.state.read().await;
-                if let Some((&peer_id, _)) = state.peers.iter().next() {
+                let our_height = self.blockchain.read().await.height();
+                let best_peer = state
+                    .peers
+                    .iter()
+                    .filter(|(_, info)| info.height > our_height)
+                    .max_by_key(|(_, info)| info.height)
+                    .map(|(&id, _)| id);
+
+                if let Some(peer_id) = best_peer {
                     drop(state);
                     if let Some(request) = sync.get_blocks_to_download(peer_id) {
                         drop(sync);

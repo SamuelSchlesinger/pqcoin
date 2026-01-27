@@ -356,13 +356,32 @@ impl SyncManager {
             accepted_count += 1;
         }
 
-        // If we got a full batch (2000 headers) AND accepted all of them, request more
-        // Otherwise, we've received all headers and should download blocks
-        // Using accepted_count prevents infinite loop when pending_headers is near capacity
-        if headers_len >= MAX_HEADERS_COUNT && accepted_count == headers_len {
+        // Determine if we need more headers
+        // We should request more if:
+        // 1. We accepted headers (not near capacity)
+        // 2. Either we got a full batch, OR we're still behind the best known height
+        let blockchain_height = self.blockchain.read().await.height();
+        let headers_tip_height = blockchain_height + self.pending_headers.len() as u64;
+        let need_more_headers = accepted_count > 0
+            && (headers_len >= MAX_HEADERS_COUNT || headers_tip_height < self.best_known_height);
+
+        if need_more_headers {
+            tracing::debug!(
+                headers_tip = headers_tip_height,
+                best_known = self.best_known_height,
+                batch_size = headers_len,
+                "requesting more headers"
+            );
             self.set_state(SyncState::DownloadingHeaders);
             responses.push(self.create_get_headers_message().await);
         } else {
+            // We've caught up to what we know about, switch to downloading blocks
+            tracing::debug!(
+                headers_tip = headers_tip_height,
+                best_known = self.best_known_height,
+                pending_headers = self.pending_headers.len(),
+                "header sync complete, switching to block download"
+            );
             self.set_state(SyncState::DownloadingBlocks);
         }
 

@@ -32,6 +32,7 @@ Security and reliability improvements before any public deployment.
 | ✅ | [Add Fuzzing Tests](roadmap/002-fuzzing-tests.md) | security, testing |
 | ✅ | [Error Handling Audit](roadmap/003-error-handling-audit.md) | security |
 | ⬜ | [Fix Fee Rate Bug - MIN_RELAY_FEE Units](roadmap/022-fix-fee-rate-bug---minrelayfee-units.md) | network, wallet |
+| 🔄 | [Fix Header Sync Stalling Bug](roadmap/026-fix-header-sync-stalling-bug.md) | network |
 
 ---
 
