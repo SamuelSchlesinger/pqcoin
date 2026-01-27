@@ -1,5 +1,7 @@
 # pqcoin
 
+> **Warning**: This is experimental research software. It has not been audited for security and there is no live deployment. Do not use for any purpose where loss of funds or security vulnerabilities would cause harm.
+
 A post-quantum cryptocurrency using NIST-standardized cryptographic primitives.
 
 ## Overview
