@@ -1,7 +1,7 @@
 ---
 title: "Fix Header Sync Stalling Bug"
 priority: 1
-status: in-progress
+status: completed
 tags: [network]
 dependencies: []
 ---
