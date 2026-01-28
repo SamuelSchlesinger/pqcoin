@@ -1,0 +1,10 @@
+[Unit]
+Description=pqcoin cryptocurrency nodes
+Documentation=https://github.com/SamuelSchlesinger/pqcoin
+
+# This target groups all pqcoin instances together.
+# Use: systemctl start pqcoin.target   - starts all enabled instances
+# Use: systemctl stop pqcoin.target    - stops all running instances
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pqcoin.mainnet</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/pqcoin</string>
+        <string>--config</string>
+        <string>/usr/local/etc/pqcoin/mainnet.toml</string>
+        <string>--datadir</string>
+        <string>/usr/local/var/pqcoin/mainnet/data</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>UserName</key>
+    <string>_pqcoin</string>
+
+    <key>GroupName</key>
+    <string>_pqcoin</string>
+
+    <key>WorkingDirectory</key>
+    <string>/usr/local/var/pqcoin/mainnet</string>
+
+    <key>StandardOutPath</key>
+    <string>/usr/local/var/log/pqcoin/mainnet.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/usr/local/var/log/pqcoin/mainnet.log</string>
+
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>65535</integer>
+    </dict>
+
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>65535</integer>
+    </dict>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>RUST_BACKTRACE</key>
+        <string>1</string>
+    </dict>
+</dict>
+</plist>

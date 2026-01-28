@@ -1,0 +1,37 @@
+# pqcoin mainnet configuration
+# This file is installed to /etc/pqcoin/mainnet.toml
+
+network_type = "mainnet"
+
+[chain]
+# Standard mainnet parameters
+target_block_time = 600    # 10 minutes
+difficulty_interval = 2016 # ~2 weeks between adjustments
+
+[network]
+# Mainnet P2P port
+port = 8333
+
+# Seed peers (add mainnet peers here when available)
+seed_peers = []
+
+# Maximum connections
+max_peers = 125
+max_outbound = 8
+
+[mining]
+enabled = false
+# address = "pq1..."  # Set your mining address
+
+[logging]
+level = "info"
+format = "text"
+
+[rpc]
+enabled = true
+port = 8332
+metrics_port = 9091
+bind = "127.0.0.1"
+
+# Note: storage.path is set via --datadir flag in systemd unit
+# Default: /var/lib/pqcoin/mainnet/data

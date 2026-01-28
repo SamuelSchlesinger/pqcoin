@@ -1,0 +1,39 @@
+# pqcoin testnet configuration
+# This file is installed to /etc/pqcoin/testnet.toml
+
+network_type = "testnet"
+
+[chain]
+# Match mainnet parameters for realistic testing
+target_block_time = 600    # 10 minutes
+difficulty_interval = 2016 # ~2 weeks between adjustments
+
+[network]
+# Testnet P2P port (different from mainnet)
+port = 18333
+
+# Seed peers for testnet (LAN testnet uses Tailscale)
+# Desktop (miner): 100.123.199.53
+# MacBook: 100.120.248.123
+seed_peers = []  # Add peers as needed, e.g. ["100.120.248.123:18333"]
+
+# Maximum connections
+max_peers = 125
+max_outbound = 8
+
+[mining]
+enabled = false
+# address = "pq1..."  # Set your mining address
+
+[logging]
+level = "info"
+format = "text"
+
+[rpc]
+enabled = true
+port = 18332
+metrics_port = 19091
+bind = "127.0.0.1"
+
+# Note: storage.path is set via --datadir flag in systemd unit
+# Default: /var/lib/pqcoin/testnet/data

@@ -63,69 +63,184 @@
         };
       }
     ) // {
-      # NixOS module
+      # NixOS module with multi-instance support
       nixosModules.default = { config, pkgs, lib, ... }:
         let
-          cfg = config.services.pqcoin;
           pqcoinPkg = self.packages.${pkgs.system}.pqcoin;
-        in {
-          options.services.pqcoin = {
-            enable = lib.mkEnableOption "pqcoin node";
 
-            testnet = lib.mkOption {
-              type = lib.types.bool;
-              default = true;
-              description = "Run on testnet";
-            };
+          # Instance options submodule
+          instanceOptions = { name, ... }: {
+            options = {
+              enable = lib.mkEnableOption "this pqcoin instance";
 
-            mine = lib.mkOption {
-              type = lib.types.bool;
-              default = false;
-              description = "Enable mining";
-            };
+              network = lib.mkOption {
+                type = lib.types.enum [ "mainnet" "testnet" ];
+                default = "mainnet";
+                description = "Network type (mainnet or testnet)";
+              };
 
-            rpc = {
-              enable = lib.mkOption {
+              mine = lib.mkOption {
                 type = lib.types.bool;
-                default = true;
-                description = "Enable JSON-RPC API";
+                default = false;
+                description = "Enable mining";
               };
 
-              bind = lib.mkOption {
-                type = lib.types.str;
-                default = "0.0.0.0";
-                description = "RPC bind address";
+              rpc = {
+                enable = lib.mkOption {
+                  type = lib.types.bool;
+                  default = true;
+                  description = "Enable JSON-RPC API";
+                };
+
+                bind = lib.mkOption {
+                  type = lib.types.str;
+                  default = "127.0.0.1";
+                  description = "RPC bind address";
+                };
+
+                port = lib.mkOption {
+                  type = lib.types.port;
+                  default = if name == "testnet" then 18332 else 8332;
+                  description = "RPC port";
+                };
+
+                metricsPort = lib.mkOption {
+                  type = lib.types.port;
+                  default = if name == "testnet" then 19091 else 9091;
+                  description = "Metrics port";
+                };
               };
 
-              port = lib.mkOption {
-                type = lib.types.port;
-                default = 8332;
-                description = "RPC port";
-              };
-            };
+              p2p = {
+                port = lib.mkOption {
+                  type = lib.types.port;
+                  default = if name == "testnet" then 18333 else 8333;
+                  description = "P2P port";
+                };
 
-            p2p = {
-              port = lib.mkOption {
-                type = lib.types.port;
-                default = 8333;
-                description = "P2P port";
+                seedPeers = lib.mkOption {
+                  type = lib.types.listOf lib.types.str;
+                  default = [];
+                  description = "Seed peers to connect to";
+                };
               };
 
-              seedPeers = lib.mkOption {
+              logLevel = lib.mkOption {
+                type = lib.types.enum [ "trace" "debug" "info" "warn" "error" ];
+                default = "info";
+                description = "Log level";
+              };
+
+              extraArgs = lib.mkOption {
                 type = lib.types.listOf lib.types.str;
                 default = [];
-                description = "Seed peers";
+                description = "Extra command-line arguments";
               };
-            };
 
-            logLevel = lib.mkOption {
-              type = lib.types.enum [ "trace" "debug" "info" "warn" "error" ];
-              default = "info";
-              description = "Log level";
+              openFirewall = lib.mkOption {
+                type = lib.types.bool;
+                default = true;
+                description = "Open firewall ports for P2P and RPC";
+              };
             };
           };
 
-          config = lib.mkIf cfg.enable {
+          # Helper to generate systemd service for an instance
+          mkService = name: icfg: lib.mkIf icfg.enable {
+            description = "pqcoin node (${name})";
+            wantedBy = [ "multi-user.target" ];
+            after = [ "network-online.target" ];
+            wants = [ "network-online.target" ];
+
+            serviceConfig = {
+              Type = "simple";
+              User = "pqcoin";
+              Group = "pqcoin";
+              StateDirectory = "pqcoin/${name}";
+
+              ExecStart = lib.concatStringsSep " " (
+                [ "${pqcoinPkg}/bin/pqcoin" ]
+                ++ lib.optional (icfg.network == "testnet") "--testnet"
+                ++ lib.optional icfg.mine "--mine"
+                ++ lib.optionals icfg.rpc.enable [
+                  "--rpc"
+                  "--rpc-bind" icfg.rpc.bind
+                  "--rpc-port" (toString icfg.rpc.port)
+                ]
+                ++ [ "--port" (toString icfg.p2p.port) ]
+                ++ [ "--log-level" icfg.logLevel ]
+                ++ [ "--datadir" "/var/lib/pqcoin/${name}/data" ]
+                ++ (map (p: "-C ${p}") icfg.p2p.seedPeers)
+                ++ icfg.extraArgs
+              );
+
+              Restart = "on-failure";
+              RestartSec = "10s";
+
+              # Security hardening
+              NoNewPrivileges = true;
+              PrivateTmp = true;
+              ProtectSystem = "strict";
+              ProtectHome = true;
+              ReadWritePaths = [ "/var/lib/pqcoin/${name}" ];
+              CapabilityBoundingSet = "";
+              LockPersonality = true;
+              MemoryDenyWriteExecute = true;
+              PrivateDevices = true;
+              ProtectClock = true;
+              ProtectControlGroups = true;
+              ProtectHostname = true;
+              ProtectKernelLogs = true;
+              ProtectKernelModules = true;
+              ProtectKernelTunables = true;
+              RestrictNamespaces = true;
+              RestrictRealtime = true;
+              RestrictSUIDSGID = true;
+              SystemCallArchitectures = "native";
+
+              # Resource limits
+              LimitNOFILE = 65535;
+            };
+          };
+
+          # Collect all firewall ports from enabled instances
+          allPorts = lib.flatten (lib.mapAttrsToList (name: icfg:
+            lib.optionals (icfg.enable && icfg.openFirewall) (
+              [ icfg.p2p.port ]
+              ++ lib.optional icfg.rpc.enable icfg.rpc.port
+            )
+          ) config.services.pqcoin.instances);
+
+          # Check if any instance is enabled
+          anyEnabled = lib.any (icfg: icfg.enable) (lib.attrValues config.services.pqcoin.instances);
+
+        in {
+          options.services.pqcoin = {
+            instances = lib.mkOption {
+              type = lib.types.attrsOf (lib.types.submodule instanceOptions);
+              default = {};
+              description = "pqcoin node instances";
+              example = lib.literalExpression ''
+                {
+                  mainnet = {
+                    enable = true;
+                    network = "mainnet";
+                    rpc.enable = true;
+                    p2p.port = 8333;
+                  };
+                  testnet = {
+                    enable = true;
+                    network = "testnet";
+                    mine = true;
+                    p2p.port = 18333;
+                  };
+                }
+              '';
+            };
+          };
+
+          config = lib.mkIf anyEnabled {
+            # Create pqcoin user/group
             users.users.pqcoin = {
               isSystemUser = true;
               group = "pqcoin";
@@ -134,34 +249,15 @@
             };
             users.groups.pqcoin = {};
 
-            systemd.services.pqcoin = {
-              description = "pqcoin node";
-              wantedBy = [ "multi-user.target" ];
-              after = [ "network.target" ];
+            # Create systemd services for each enabled instance
+            systemd.services = lib.mapAttrs' (name: icfg:
+              lib.nameValuePair "pqcoin-${name}" (mkService name icfg)
+            ) config.services.pqcoin.instances;
 
-              serviceConfig = {
-                Type = "simple";
-                User = "pqcoin";
-                Group = "pqcoin";
-                StateDirectory = if cfg.testnet then "pqcoin-testnet" else "pqcoin";
-                ExecStart = lib.concatStringsSep " " (
-                  [ "${pqcoinPkg}/bin/pqcoin" ]
-                  ++ lib.optional cfg.testnet "--testnet"
-                  ++ lib.optional cfg.mine "--mine"
-                  ++ lib.optionals cfg.rpc.enable [
-                    "--rpc" "--rpc-bind" cfg.rpc.bind "--rpc-port" (toString cfg.rpc.port)
-                  ]
-                  ++ [ "--port" (toString cfg.p2p.port) "--log-level" cfg.logLevel ]
-                  ++ (map (p: "-C ${p}") cfg.p2p.seedPeers)
-                );
-                Restart = "on-failure";
-                RestartSec = "10s";
-              };
-            };
+            # Open firewall ports
+            networking.firewall.allowedTCPPorts = allPorts;
 
-            networking.firewall.allowedTCPPorts = [ cfg.p2p.port ]
-              ++ lib.optional cfg.rpc.enable cfg.rpc.port;
-
+            # Add pqcoin to system packages
             environment.systemPackages = [ pqcoinPkg ];
           };
         };

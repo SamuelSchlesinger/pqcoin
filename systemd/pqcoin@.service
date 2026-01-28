@@ -1,0 +1,58 @@
+[Unit]
+Description=pqcoin node (%i network)
+Documentation=https://github.com/SamuelSchlesinger/pqcoin
+After=network-online.target
+Wants=network-online.target
+PartOf=pqcoin.target
+
+[Service]
+Type=simple
+User=pqcoin
+Group=pqcoin
+
+# Load environment file for this instance (optional)
+EnvironmentFile=-/etc/pqcoin/%i.env
+
+# Run pqcoin with instance-specific config and data directory
+ExecStart=/usr/local/bin/pqcoin \
+    --config /etc/pqcoin/%i.toml \
+    --datadir /var/lib/pqcoin/%i/data \
+    $PQCOIN_EXTRA_ARGS
+
+# Logging to systemd journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pqcoin-%i
+
+# Restart policy
+Restart=on-failure
+RestartSec=10s
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/pqcoin/%i
+CapabilityBoundingSet=
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+# Resource limits
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
