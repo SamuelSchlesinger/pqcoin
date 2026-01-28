@@ -66,16 +66,22 @@ detect_source_dir() {
 build_pqcoin() {
     log_info "Building pqcoin..."
 
-    if ! command -v cargo &> /dev/null; then
-        log_error "cargo not found. Please install Rust first."
+    # Build as the original user, not root (rustup is user-specific)
+    ORIGINAL_USER="${SUDO_USER:-$USER}"
+    ORIGINAL_HOME=$(getent passwd "$ORIGINAL_USER" | cut -d: -f6)
+
+    # Check if cargo exists for the original user
+    if ! sudo -u "$ORIGINAL_USER" bash -c "command -v cargo" &> /dev/null; then
+        log_error "cargo not found for user $ORIGINAL_USER. Please install Rust first."
         log_error "Visit: https://rustup.rs/"
         exit 1
     fi
 
     cd "$SOURCE_DIR"
 
-    # Build release binaries
-    if cargo build --release; then
+    # Build release binaries as the original user
+    log_info "Building as user: $ORIGINAL_USER"
+    if sudo -u "$ORIGINAL_USER" bash -c "cd '$SOURCE_DIR' && cargo build --release"; then
         log_success "Build completed"
     else
         log_error "Build failed"
