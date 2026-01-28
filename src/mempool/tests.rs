@@ -25,7 +25,7 @@ fn test_blockchain() -> (
         - (crate::constants::COINBASE_MATURITY + 10) * 600;
 
     let genesis = create_genesis_block(timestamp, 0x40ffffff, 50_000_000, address);
-    let mut chain = Blockchain::new(genesis, 2016, 600, 50_000_000, 210_000);
+    let mut chain = Blockchain::new(genesis, 10000, 600, 50_000_000, 210_000);
 
     // Add COINBASE_MATURITY blocks to mature the genesis coinbase
     for _ in 0..crate::constants::COINBASE_MATURITY {
@@ -42,7 +42,7 @@ fn test_blockchain() -> (
             prev_hash: prev_block.hash(),
             merkle_root,
             timestamp,
-            difficulty_bits: prev_block.header.difficulty_bits,
+            difficulty_bits: chain.next_difficulty(),
             nonce: [0u8; 32],
         };
 

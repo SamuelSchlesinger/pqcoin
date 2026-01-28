@@ -1124,7 +1124,7 @@ mod tests {
         let (pk, _) = ml_dsa_87::keygen();
         let addr = Address::from_public_key(&pk);
         let genesis = create_genesis_block(0, 0x40ffffff, 50_000_000, addr);
-        let blockchain = Blockchain::new(genesis, 2016, 600, 50_000_000, 210_000);
+        let blockchain = Blockchain::new(genesis, 10000, 600, 50_000_000, 210_000);
         Arc::new(RwLock::new(blockchain))
     }
 

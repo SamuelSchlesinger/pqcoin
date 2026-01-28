@@ -134,11 +134,67 @@ pub const DEFAULT_DIFFICULTY: u32 = 0x3e00ffff;
 /// Initial block reward (50 coins in base units).
 pub const INITIAL_REWARD: u64 = 50_000_000;
 
-/// Difficulty adjustment interval (blocks).
+/// Legacy difficulty adjustment interval (blocks).
+/// Note: Use `difficulty_interval_at_height()` for the graduated schedule.
 pub const DIFFICULTY_INTERVAL: u64 = 2016;
 
 /// Target block time in seconds (10 minutes like Bitcoin).
 pub const TARGET_BLOCK_TIME: u64 = 600;
+
+// ============================================================================
+// Graduated Difficulty Adjustment Schedule
+// ============================================================================
+//
+// The difficulty adjustment interval increases over time:
+// - Early chain: frequent adjustments for fast stabilization
+// - Mature chain: infrequent adjustments for stability (like Bitcoin)
+//
+// At 10-minute blocks:
+// - Phase 1 (0-1000):      10 blocks  (~1.7 hours between adjustments)
+// - Phase 2 (1000-10000):  50 blocks  (~8.3 hours)
+// - Phase 3 (10000-100000): 200 blocks (~1.4 days)
+// - Phase 4 (100000-262080): 504 blocks (~3.5 days)
+// - Phase 5 (262080+):     2016 blocks (~2 weeks, Bitcoin-level)
+
+/// Phase boundaries for graduated difficulty adjustment.
+const DIFFICULTY_PHASE_1_END: u64 = 1_000;
+const DIFFICULTY_PHASE_2_END: u64 = 10_000;
+const DIFFICULTY_PHASE_3_END: u64 = 100_000;
+const DIFFICULTY_PHASE_4_END: u64 = 262_080; // ~5 years, divisible by 2016
+
+/// Intervals for each phase.
+const DIFFICULTY_INTERVAL_PHASE_1: u64 = 10;
+const DIFFICULTY_INTERVAL_PHASE_2: u64 = 50;
+const DIFFICULTY_INTERVAL_PHASE_3: u64 = 200;
+const DIFFICULTY_INTERVAL_PHASE_4: u64 = 504;
+const DIFFICULTY_INTERVAL_PHASE_5: u64 = 2016;
+
+/// Returns the difficulty adjustment interval for a given block height.
+///
+/// The interval increases over time to allow fast stabilization early on
+/// while achieving Bitcoin-level stability at maturity (~5 years).
+pub fn difficulty_interval_at_height(height: u64) -> u64 {
+    if height < DIFFICULTY_PHASE_1_END {
+        DIFFICULTY_INTERVAL_PHASE_1
+    } else if height < DIFFICULTY_PHASE_2_END {
+        DIFFICULTY_INTERVAL_PHASE_2
+    } else if height < DIFFICULTY_PHASE_3_END {
+        DIFFICULTY_INTERVAL_PHASE_3
+    } else if height < DIFFICULTY_PHASE_4_END {
+        DIFFICULTY_INTERVAL_PHASE_4
+    } else {
+        DIFFICULTY_INTERVAL_PHASE_5
+    }
+}
+
+/// Returns true if the given height is a difficulty adjustment boundary.
+pub fn is_difficulty_adjustment_height(height: u64) -> bool {
+    if height == 0 {
+        return false;
+    }
+    let interval = difficulty_interval_at_height(height);
+    height % interval == 0
+}
 
 /// Halving interval (blocks).
 pub const HALVING_INTERVAL: u64 = 210_000;
@@ -146,9 +202,10 @@ pub const HALVING_INTERVAL: u64 = 210_000;
 /// Minimum difficulty bits (maximum target).
 /// This prevents difficulty from dropping below a safe floor, even during
 /// periods of very low hashrate. Format: (exponent << 24) | coefficient.
-/// 0x41ffffff = exponent 65 (max for 512-bit), coefficient 0xffffff
+/// 0x40ffffff = exponent 65 (max for 512-bit), coefficient 0x7fffff
 /// This effectively allows any valid PoW but protects against edge cases.
-pub const MIN_DIFFICULTY_BITS: u32 = 0x41ffffff;
+/// The coefficient is limited to 0x7fffff to avoid normalization issues.
+pub const MIN_DIFFICULTY_BITS: u32 = 0x40ffffff;
 
 // ============================================================================
 // Mempool Constants
@@ -188,6 +245,7 @@ pub const TESTNET_GENESIS_TIMESTAMP: u64 = 1704067200;
 
 /// Testnet difficulty - very low for fast block generation.
 /// Format: (exponent << 24) | coefficient
-/// 0x40ffffff = exponent 64, coefficient 0xffffff
-/// This gives an extremely easy target (only need first byte of hash < 0xff).
+/// 0x40ffffff = exponent 65, coefficient 0x7fffff
+/// This gives an extremely easy target. The coefficient must be <= 0x7fffff
+/// to avoid normalization during difficulty adjustments.
 pub const TESTNET_DIFFICULTY: u32 = 0x40ffffff;

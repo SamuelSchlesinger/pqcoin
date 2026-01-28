@@ -109,10 +109,10 @@ impl TestNode {
         let blockchain = Blockchain::open(
             storage_dir.path(),
             genesis,
-            2016,       // difficulty_adjustment_interval
-            600,        // target_block_time
+            10000, // difficulty_adjustment_interval (non-standard to avoid graduated schedule)
+            600,   // target_block_time
             50_000_000, // initial_reward
-            210_000,    // halving_interval
+            210_000, // halving_interval
         )?;
         let blockchain = Arc::new(RwLock::new(blockchain));
 
@@ -584,7 +584,7 @@ impl TestNode {
         let dummy_blockchain = {
             let temp_dir = TempDir::new().expect("failed to create temp dir for dummy blockchain");
             let genesis = self.blockchain.read().await.genesis().clone();
-            let bc = Blockchain::open(temp_dir.path(), genesis, 2016, 600, 50_000_000, 210_000)
+            let bc = Blockchain::open(temp_dir.path(), genesis, 10000, 600, 50_000_000, 210_000)
                 .expect("failed to create dummy blockchain");
             std::mem::forget(temp_dir); // We don't care about cleanup
             Arc::new(RwLock::new(bc))
@@ -774,10 +774,10 @@ impl IsolatedNode {
         let blockchain = Blockchain::open(
             storage_dir.path(),
             genesis,
-            2016,       // difficulty_adjustment_interval
-            600,        // target_block_time
+            10000, // difficulty_adjustment_interval (non-standard to avoid graduated schedule)
+            600,   // target_block_time
             50_000_000, // initial_reward
-            210_000,    // halving_interval
+            210_000, // halving_interval
         )?;
         let blockchain = Arc::new(RwLock::new(blockchain));
 

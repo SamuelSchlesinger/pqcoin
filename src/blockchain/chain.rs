@@ -1,6 +1,9 @@
 //! Blockchain state management.
 
-use crate::constants::{MAX_BLOCK_SIZE, MAX_FUTURE_BLOCK_TIME, MAX_TX_INPUTS, MAX_TX_OUTPUTS};
+use crate::constants::{
+    MAX_BLOCK_SIZE, MAX_FUTURE_BLOCK_TIME, MAX_TX_INPUTS, MAX_TX_OUTPUTS,
+    difficulty_interval_at_height, is_difficulty_adjustment_height,
+};
 use crate::crypto::Hash;
 use crate::storage::{LmdbStorage, StorageError, StorageWrite, StorageWriteTxn};
 use std::collections::HashMap;
@@ -328,26 +331,57 @@ impl Blockchain {
         }
     }
 
+    /// Get the effective difficulty adjustment interval for a given height.
+    ///
+    /// Uses the graduated schedule unless fast_blocks mode is enabled
+    /// (detected by a non-standard configured interval).
+    fn effective_interval(&self, height: u64) -> u64 {
+        // If the configured interval is NOT the standard 2016, use it directly
+        // (this covers testnets, tests, and custom configurations)
+        if self.difficulty_adjustment_interval != crate::constants::DIFFICULTY_INTERVAL {
+            return self.difficulty_adjustment_interval;
+        }
+        // For standard interval (2016), use the graduated schedule
+        difficulty_interval_at_height(height)
+    }
+
+    /// Check if a height is a difficulty adjustment boundary.
+    fn is_adjustment_boundary(&self, height: u64) -> bool {
+        if height == 0 {
+            return false;
+        }
+        // If not using standard interval, use the configured interval
+        if self.difficulty_adjustment_interval != crate::constants::DIFFICULTY_INTERVAL {
+            return height % self.difficulty_adjustment_interval == 0;
+        }
+        // For standard interval (2016), use graduated schedule
+        is_difficulty_adjustment_height(height)
+    }
+
     /// Calculate the expected difficulty for a new block.
     ///
-    /// Difficulty is adjusted every `difficulty_adjustment_interval` blocks
-    /// to maintain the target block time.
+    /// Uses a graduated difficulty adjustment schedule:
+    /// - Early chain: frequent adjustments (every 10-50 blocks)
+    /// - Mature chain: infrequent adjustments (every 2016 blocks)
     pub fn next_difficulty(&self) -> u32 {
         let tip = self.tip();
+        let next_height = self.tip_height + 1;
 
         // If we're not at an adjustment boundary, keep the same difficulty
-        if (self.tip_height + 1) % self.difficulty_adjustment_interval != 0 {
+        if !self.is_adjustment_boundary(next_height) {
             return tip.header.difficulty_bits;
         }
 
+        // Get the interval for this adjustment period
+        let interval = self.effective_interval(next_height);
+
         // Find the block at the start of this adjustment period
-        let period_start_height = self
-            .tip_height
-            .saturating_sub(self.difficulty_adjustment_interval - 1);
+        let period_start_height = next_height.saturating_sub(interval);
         let mut block_hash = self.tip;
 
         // Walk back to find the period start block
-        for _ in 0..(self.tip_height - period_start_height) {
+        let steps = self.tip_height.saturating_sub(period_start_height);
+        for _ in 0..steps {
             if let Some(block) = self.blocks.get(&block_hash) {
                 block_hash = block.header.prev_hash;
             } else {
@@ -360,11 +394,16 @@ impl Blockchain {
             None => return tip.header.difficulty_bits,
         };
 
+        // Calculate the number of intervals between period_start and tip.
+        // If we have blocks at heights 0..9, that's 9 intervals (not 10 blocks).
+        // The time from period_start to tip spans (tip_height - period_start_height) intervals.
+        let interval_count = self.tip_height - period_start_height;
+
         calculate_new_difficulty(
             tip.header.timestamp,
             period_start.header.timestamp,
             tip.header.difficulty_bits,
-            self.difficulty_adjustment_interval,
+            interval_count,
             self.target_block_time,
         )
     }

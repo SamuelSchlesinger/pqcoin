@@ -1,6 +1,9 @@
 //! Difficulty adjustment logic.
 
-use crate::constants::{DIFFICULTY_COEFFICIENT_MASK, MIN_DIFFICULTY_BITS};
+use crate::constants::{
+    DIFFICULTY_COEFFICIENT_MASK, MIN_DIFFICULTY_BITS, difficulty_interval_at_height,
+    is_difficulty_adjustment_height,
+};
 use crate::crypto::Hash;
 use std::collections::HashMap;
 
@@ -48,7 +51,11 @@ pub(crate) fn median_time_past(
 /// Calculate the expected difficulty for a block at a given height.
 ///
 /// This validates that a block has the correct difficulty based on its position
-/// in the chain and the difficulty adjustment schedule.
+/// in the chain and the graduated difficulty adjustment schedule.
+///
+/// The `difficulty_adjustment_interval` parameter is used to detect fast_blocks mode:
+/// - If <= 100, it's fast_blocks mode and the fixed interval is used
+/// - Otherwise, the graduated schedule is used
 pub(crate) fn expected_difficulty_at(
     height: u64,
     prev_hash: Hash,
@@ -61,16 +68,30 @@ pub(crate) fn expected_difficulty_at(
         None => return 0, // Unknown parent, can't calculate
     };
 
+    // Determine effective interval (graduated schedule vs custom)
+    // Use graduated schedule only when the standard 2016 interval is configured
+    let use_graduated = difficulty_adjustment_interval == crate::constants::DIFFICULTY_INTERVAL;
+    let effective_interval = if use_graduated {
+        difficulty_interval_at_height(height)
+    } else {
+        difficulty_adjustment_interval
+    };
+
+    // Check if this is an adjustment boundary
+    let is_boundary = if use_graduated {
+        is_difficulty_adjustment_height(height)
+    } else {
+        height > 0 && height % difficulty_adjustment_interval == 0
+    };
+
     // If not at an adjustment boundary, use the same difficulty as parent
-    if height % difficulty_adjustment_interval != 0 {
+    if !is_boundary {
         return prev_block.header.difficulty_bits;
     }
 
     // At adjustment boundary - need to calculate new difficulty
     // Find the block at the start of this adjustment period
-    // Use interval - 1 because we're calculating from prev_block (height - 1)
-    // E.g., at height 2016, we want blocks 0..2015 (2016 blocks)
-    let period_start_height = height.saturating_sub(difficulty_adjustment_interval);
+    let period_start_height = height.saturating_sub(effective_interval);
     let mut block_hash = prev_hash;
 
     // Walk back to find the period start block
@@ -88,11 +109,15 @@ pub(crate) fn expected_difficulty_at(
         None => return prev_block.header.difficulty_bits,
     };
 
+    // Calculate the number of intervals between period_start and prev_block.
+    // prev_block is at height-1, so intervals = (height-1) - period_start_height.
+    let interval_count = (height - 1) - period_start_height;
+
     calculate_new_difficulty(
         prev_block.header.timestamp,
         period_start.header.timestamp,
         prev_block.header.difficulty_bits,
-        difficulty_adjustment_interval,
+        interval_count,
         target_block_time,
     )
 }
@@ -123,21 +148,25 @@ pub(crate) fn calculate_new_difficulty(
     // Minimum coefficient threshold to maintain precision
     const MIN_COEFFICIENT: u64 = 0x8000;
 
+    // Maximum coefficient is 24 bits (0xFFFFFF) per the mask
+    const MAX_COEFFICIENT: u64 = 0xFFFFFF;
+
     let (new_exponent, new_coefficient) = if scaled == 0 {
         (1u32, 1u32)
-    } else if scaled > 0x7FFFFF {
+    } else if scaled > MAX_COEFFICIENT {
+        // Coefficient overflow - increase exponent and shift right
         let shift = 64 - scaled.leading_zeros();
-        let extra_bytes = shift.saturating_sub(23).div_ceil(8);
+        let extra_bytes = shift.saturating_sub(24).div_ceil(8);
         let new_exp = exponent.saturating_add(extra_bytes);
         let new_coef = (scaled >> (extra_bytes * 8)) as u32;
         if new_exp > 64 {
-            (64u32, 0x7FFFFFu32)
+            (64u32, MAX_COEFFICIENT as u32)
         } else {
-            (new_exp, new_coef.min(0x7FFFFF))
+            (new_exp, new_coef.min(MAX_COEFFICIENT as u32))
         }
     } else if scaled < MIN_COEFFICIENT && exponent > 3 {
         // Coefficient too small - decrease exponent to maintain precision
-        let new_coef = (scaled * 256).min(0x7FFFFF);
+        let new_coef = (scaled * 256).min(MAX_COEFFICIENT);
         let new_exp = exponent.saturating_sub(1);
         (new_exp, new_coef as u32)
     } else {

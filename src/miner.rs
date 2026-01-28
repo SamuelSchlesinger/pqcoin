@@ -17,7 +17,7 @@
 //! nonce space is effectively infinite for practical mining purposes.
 
 use crate::blockchain::{Address, Block, BlockHeader, Blockchain, Transaction};
-use crate::constants::MAX_BLOCK_TXS;
+use crate::constants::{MAX_BLOCK_TXS, MAX_FUTURE_BLOCK_TIME};
 use crate::mempool::Mempool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -70,7 +70,30 @@ pub fn mine_block(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let timestamp = std::cmp::max(current_time, prev_timestamp + 1);
+
+    // Calculate minimum required timestamp (must be > prev_timestamp)
+    let min_timestamp = prev_timestamp + 1;
+
+    // Throttle if timestamp would exceed MAX_FUTURE_BLOCK_TIME
+    // This prevents runaway timestamp drift when mining is very fast
+    let max_allowed = current_time + MAX_FUTURE_BLOCK_TIME - 60; // 60s safety margin
+    let timestamp = if min_timestamp > max_allowed {
+        // We're too far ahead - wait for real time to catch up
+        let wait_secs = min_timestamp - max_allowed;
+        tracing::info!(
+            wait_secs,
+            "throttling miner: timestamp would exceed future limit"
+        );
+        std::thread::sleep(std::time::Duration::from_secs(wait_secs));
+        // Recalculate current time after sleeping
+        let new_current = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        std::cmp::max(new_current, min_timestamp)
+    } else {
+        std::cmp::max(current_time, min_timestamp)
+    };
 
     // Get block reward
     let reward = blockchain.block_reward(height);

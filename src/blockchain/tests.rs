@@ -351,7 +351,7 @@ fn test_blockchain_creation() {
     let address = Address::from_public_key(&pk);
     let genesis = create_genesis_block(0, 0x40ffffff, 50_000_000, address);
 
-    let chain = Blockchain::new(genesis.clone(), 2016, 600, 50_000_000, 210_000);
+    let chain = Blockchain::new(genesis.clone(), 10000, 600, 50_000_000, 210_000);
 
     assert_eq!(chain.height(), 0);
     assert_eq!(chain.tip_hash(), genesis.hash());
@@ -364,7 +364,7 @@ fn test_block_reward_halving() {
     let address = Address::from_public_key(&pk);
     let genesis = create_genesis_block(0, 0x40ffffff, 50_000_000, address);
 
-    let chain = Blockchain::new(genesis, 2016, 600, 50_000_000, 100);
+    let chain = Blockchain::new(genesis, 10000, 600, 50_000_000, 100);
 
     assert_eq!(chain.block_reward(0), 50_000_000);
     assert_eq!(chain.block_reward(99), 50_000_000);
@@ -410,7 +410,7 @@ fn test_utxos_for_address() {
     let address = Address::from_public_key(&pk);
     let genesis = create_genesis_block(0, 0x40ffffff, 50_000_000, address);
 
-    let chain = Blockchain::new(genesis, 2016, 600, 50_000_000, 210_000);
+    let chain = Blockchain::new(genesis, 10000, 600, 50_000_000, 210_000);
 
     let utxos = chain.utxos_for_address(&address);
     assert_eq!(utxos.len(), 1);
@@ -500,7 +500,7 @@ fn test_blockchain() -> (Blockchain, PublicKey, SecretKey, Address) {
         timestamp, 0x40ffffff, // Easy difficulty
         50_000_000, address,
     );
-    let mut chain = Blockchain::new(genesis, 2016, 600, 50_000_000, 210_000);
+    let mut chain = Blockchain::new(genesis, 10000, 600, 50_000_000, 210_000);
 
     // Add COINBASE_MATURITY blocks to mature the genesis coinbase
     for _ in 0..COINBASE_MATURITY {
@@ -517,7 +517,7 @@ fn test_blockchain() -> (Blockchain, PublicKey, SecretKey, Address) {
             prev_hash: prev_block.hash(),
             merkle_root,
             timestamp,
-            difficulty_bits: prev_block.header.difficulty_bits,
+            difficulty_bits: chain.next_difficulty(),
             nonce: [0u8; 32],
         };
 
@@ -592,7 +592,7 @@ fn create_block_with_txs(chain: &Blockchain, txs: Vec<Transaction>, recipient: A
         prev_hash: prev_block.hash(),
         merkle_root,
         timestamp,
-        difficulty_bits: prev_block.header.difficulty_bits,
+        difficulty_bits: chain.next_difficulty(),
         nonce: [0u8; 32],
     };
 
@@ -708,7 +708,7 @@ fn test_insufficient_multisig_signatures_rejected() {
     };
     let genesis = Block::new(genesis_header, vec![coinbase.clone()]);
 
-    let mut chain = Blockchain::new(genesis, 2016, 600, 50_000_000, 210_000);
+    let mut chain = Blockchain::new(genesis, 10000, 600, 50_000_000, 210_000);
 
     // Add COINBASE_MATURITY blocks to mature the genesis coinbase
     for _ in 0..COINBASE_MATURITY {
@@ -725,7 +725,7 @@ fn test_insufficient_multisig_signatures_rejected() {
             prev_hash: prev_block.hash(),
             merkle_root: block_merkle_root,
             timestamp,
-            difficulty_bits: prev_block.header.difficulty_bits,
+            difficulty_bits: chain.next_difficulty(),
             nonce: [0u8; 32],
         };
 
