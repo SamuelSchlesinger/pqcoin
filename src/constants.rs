@@ -78,7 +78,9 @@ pub const MAX_CONNECTIONS_PER_IP: usize = 3;
 
 /// Maximum connections allowed per /16 subnet.
 /// Limits Sybil attack effectiveness by preventing address space concentration.
-pub const MAX_PER_SUBNET: usize = 2;
+/// Set to 16 to allow LAN testnet clusters (all nodes on 192.168.x.x subnet).
+/// For mainnet, this could be reduced to 2-4.
+pub const MAX_PER_SUBNET: usize = 16;
 
 /// Minimum time between connection attempts from the same IP (seconds).
 pub const CONNECTION_RATE_LIMIT_SECS: u64 = 1;
