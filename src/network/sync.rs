@@ -248,10 +248,10 @@ impl SyncManager {
         }
 
         // Always include genesis
-        if let Some(genesis_hash) = blockchain.hash_at_height(0)
-            && locator.last() != Some(&genesis_hash)
-        {
-            locator.push(genesis_hash);
+        if let Some(genesis_hash) = blockchain.hash_at_height(0) {
+            if locator.last() != Some(&genesis_hash) {
+                locator.push(genesis_hash);
+            }
         }
 
         locator
