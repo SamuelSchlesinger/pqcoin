@@ -334,6 +334,7 @@ async fn main() {
     if config.mining.enabled {
         let blockchain_miner = blockchain.clone();
         let mempool_miner = mempool.clone();
+        let sync_manager = service.sync_manager();
         let miner_ctl = background_miner.clone();
         let block_tx = block_submitter;
 
@@ -341,6 +342,23 @@ async fn main() {
             tracing::info!("starting miner");
 
             loop {
+                // Wait for sync to complete before mining
+                // This prevents mining on a stale chain during IBD
+                {
+                    use pqcoin::network::SyncState;
+                    let sync_state = sync_manager.read().await.state();
+                    match sync_state {
+                        SyncState::DownloadingHeaders | SyncState::DownloadingBlocks => {
+                            tracing::debug!(state = ?sync_state, "waiting for sync to complete before mining");
+                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                            continue;
+                        }
+                        SyncState::Idle | SyncState::Synced => {
+                            // OK to mine
+                        }
+                    }
+                }
+
                 // Reset stop flag for new mining round
                 miner_ctl.reset();
                 let stop_flag = miner_ctl.stop_flag();
