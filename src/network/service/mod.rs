@@ -145,6 +145,14 @@ impl NetworkService {
         self.state.clone()
     }
 
+    /// Get a reference to the sync manager.
+    ///
+    /// This allows external code (like the miner) to check sync state
+    /// before performing operations that should wait for sync to complete.
+    pub fn sync_manager(&self) -> Arc<RwLock<SyncManager>> {
+        self.sync.clone()
+    }
+
     /// Take the event receiver (can only be called once).
     pub fn take_event_receiver(&mut self) -> Option<mpsc::Receiver<NetworkEvent>> {
         self.event_rx.take()
